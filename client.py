@@ -437,6 +437,7 @@ class PokerClient:
             print(f"Could not connect to {self.host}:{self.port}: {error}")
             return
 
+        socket_obj.settimeout(None)
         with socket_obj:
             self.socket_obj = socket_obj
             set_disconnect_checker(self._server_disconnected)
@@ -449,6 +450,9 @@ class PokerClient:
                         message = recv_json(file_obj)
                     except ProtocolError as error:
                         print(f"Server sent an invalid message: {error}")
+                        return
+                    except TimeoutError:
+                        print("Timed out waiting for the server. Reconnect with the same name if needed.")
                         return
                     except ConnectionResetError:
                         print("Disconnected from server.")
