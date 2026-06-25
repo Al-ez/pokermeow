@@ -43,6 +43,7 @@ class AllocatorGame(NoLimitHoldemGame):
         self.bottom_board: List[Card] = []
         self.allocations: Dict[str, Allocation] = {}
         self.bomb_pot_ante = bomb_pot_ante
+        self.pot_results = []
         if self.bomb_pot_ante > 0:
             self.big_blind = self.bomb_pot_ante
 
@@ -52,6 +53,7 @@ class AllocatorGame(NoLimitHoldemGame):
         self.top_board = []
         self.bottom_board = []
         self.allocations = {}
+        self.pot_results = []
         self.pot = ZERO
         self.current_bet = ZERO
         self.min_raise = self.big_blind
@@ -226,6 +228,7 @@ class AllocatorGame(NoLimitHoldemGame):
 
     def _award_allocator_pots(self, active_players, amount_won) -> List[str]:
         winners_by_pot = []
+        self.pot_results = []
         committed_levels = sorted(
             {
                 player.total_committed
@@ -234,6 +237,7 @@ class AllocatorGame(NoLimitHoldemGame):
             }
         )
         previous_level = ZERO
+        pot_number = 0
 
         for level in committed_levels:
             contributors = [
@@ -256,6 +260,7 @@ class AllocatorGame(NoLimitHoldemGame):
             if not eligible_players:
                 continue
 
+            pot_number += 1
             scores = self.calculate_scores(eligible_players)
             best_score = max(score.total for score in scores.values())
             pot_winners = [
@@ -264,6 +269,15 @@ class AllocatorGame(NoLimitHoldemGame):
                 if scores[player.name].total == best_score
             ]
             share = pot_amount / len(pot_winners)
+            self.pot_results.append(
+                {
+                    "name": "Main pot" if pot_number == 1 else f"Side pot {pot_number - 1}",
+                    "amount": pot_amount,
+                    "eligible_players": [player.name for player in eligible_players],
+                    "scores": scores,
+                    "winners": [player.name for player in pot_winners],
+                }
+            )
 
             for winner in pot_winners:
                 winner.stack += share

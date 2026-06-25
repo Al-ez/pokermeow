@@ -377,6 +377,16 @@ def format_winners(winners, label_key):
 
 
 def show_allocator_showdown(details):
+    show_allocator_score_section(details)
+
+    side_pots = details.get("side_pots", [])
+    for side_pot in side_pots:
+        print(f"\n{side_pot['name']} results")
+        print(f"Pot amount: {side_pot['amount']}")
+        show_allocator_score_section(side_pot)
+
+
+def show_allocator_score_section(details):
     print("Top board")
     print(f"Board: {show_cards(details['top']['board'])}")
     print("Allocations:")

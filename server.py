@@ -1181,6 +1181,40 @@ class PokerTableSession:
     def _allocator_showdown_details(self):
         active_players = [player for player in self.game.players if not player.folded]
         scores = self.game.calculate_scores()
+        side_pots = []
+
+        for pot_result in getattr(self.game, "pot_results", [])[1:]:
+            eligible_names = set(pot_result["eligible_players"])
+            eligible_players = [
+                player
+                for player in active_players
+                if player.name in eligible_names
+            ]
+            pot_scores = pot_result["scores"]
+            side_pots.append(
+                {
+                    "name": pot_result["name"],
+                    "amount": pot_result["amount"],
+                    "top": self._allocator_board_detail(
+                        eligible_players,
+                        "top",
+                        self.game.top_board,
+                    ),
+                    "bottom": self._allocator_board_detail(
+                        eligible_players,
+                        "bottom",
+                        self.game.bottom_board,
+                    ),
+                    "hand_strength": self._allocator_hand_strength_detail(
+                        eligible_players
+                    ),
+                    "totals": {
+                        player.name: self._format_points(pot_scores[player.name].total)
+                        for player in eligible_players
+                    },
+                    "winners": pot_result["winners"],
+                }
+            )
 
         return {
             "top": self._allocator_board_detail(
@@ -1198,6 +1232,7 @@ class PokerTableSession:
                 player.name: self._format_points(scores[player.name].total)
                 for player in active_players
             },
+            "side_pots": side_pots,
         }
 
     def _allocator_board_detail(self, active_players, allocation_name, board):

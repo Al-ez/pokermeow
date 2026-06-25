@@ -245,6 +245,10 @@ def test_allocator_side_pots_are_rescored_by_eligible_players():
 
     assert winners == ["Bob", "Cara"]
     assert amount_won == {"Bob": Decimal("150"), "Cara": Decimal("100")}
+    assert game.pot_results[0]["eligible_players"] == ["Alice", "Bob", "Cara"]
+    assert game.pot_results[1]["eligible_players"] == ["Alice", "Cara"]
+    assert game.pot_results[1]["scores"]["Cara"].total == Fraction(2, 1)
+    assert game.pot_results[1]["scores"]["Alice"].total == Fraction(1, 1)
 
 
 def run_tests():
