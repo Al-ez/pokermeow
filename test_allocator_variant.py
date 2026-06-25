@@ -1,4 +1,5 @@
 from fractions import Fraction
+from decimal import Decimal
 
 from allocator import Allocation, AllocatorGame, AllocatorScore
 from card import Card
@@ -211,6 +212,41 @@ def test_side_pot_winners_use_allocator_scores():
     assert amount_won == {"Bob": 150, "Alice": 100}
 
 
+def test_allocator_side_pots_are_rescored_by_eligible_players():
+    game = AllocatorGame({"Alice": 100, "Bob": 50, "Cara": 100}, shuffle=False)
+    alice, bob, cara = game.players
+
+    alice.commit(100)
+    bob.commit(50)
+    cara.commit(100)
+    game.pot = 250
+
+    def calculate_scores(active_players=None):
+        names = {player.name for player in active_players}
+        if names == {"Alice", "Bob", "Cara"}:
+            return {
+                "Alice": AllocatorScore(Fraction(2, 1), Fraction(0, 1), Fraction(0, 1)),
+                "Bob": AllocatorScore(Fraction(3, 1), Fraction(0, 1), Fraction(0, 1)),
+                "Cara": AllocatorScore(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1)),
+            }
+
+        if names == {"Alice", "Cara"}:
+            return {
+                "Alice": AllocatorScore(Fraction(1, 1), Fraction(0, 1), Fraction(0, 1)),
+                "Cara": AllocatorScore(Fraction(2, 1), Fraction(0, 1), Fraction(0, 1)),
+            }
+
+        raise AssertionError(f"Unexpected eligible players: {names}")
+
+    game.calculate_scores = calculate_scores
+    amount_won = {}
+
+    winners = game._award_allocator_pots(game.players, amount_won)
+
+    assert winners == ["Bob", "Cara"]
+    assert amount_won == {"Bob": Decimal("150"), "Cara": Decimal("100")}
+
+
 def run_tests():
     tests = [
         test_allocation_validation_accepts_all_six_cards_once,
@@ -222,6 +258,7 @@ def run_tests():
         test_point_splitting_for_hand_strength_tie,
         test_overall_winner_determined_by_total_allocator_score,
         test_side_pot_winners_use_allocator_scores,
+        test_allocator_side_pots_are_rescored_by_eligible_players,
     ]
 
     for test in tests:

@@ -622,7 +622,7 @@ class PokerClient:
 
 def main():
     parser = argparse.ArgumentParser(description="PokerMeow network client")
-    parser.add_argument("host")
+    parser.add_argument("host", help="Server IP address, for example 192.168.1.23")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--name", default="")
     args = parser.parse_args()

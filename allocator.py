@@ -178,8 +178,10 @@ class AllocatorGame(NoLimitHoldemGame):
         if set(allocated_cards) != set(player_cards):
             raise ValueError("Allocation must use every private card exactly once")
 
-    def calculate_scores(self) -> Dict[str, AllocatorScore]:
-        active_players = [player for player in self.players if not player.folded]
+    def calculate_scores(self, active_players=None) -> Dict[str, AllocatorScore]:
+        if active_players is None:
+            active_players = [player for player in self.players if not player.folded]
+
         if len(self.top_board) != 5 or len(self.bottom_board) != 5:
             raise RuntimeError("Allocator scoring requires complete top and bottom boards")
 
@@ -210,14 +212,8 @@ class AllocatorGame(NoLimitHoldemGame):
         if len(active_players) == 1:
             return super().showdown()
 
-        scores = self.calculate_scores()
         amount_won = {}
-        winners_by_pot = self._award_showdown_pots(
-            active_players,
-            scores,
-            amount_won,
-            score_key=lambda score: (score.total,),
-        )
+        winners_by_pot = self._award_allocator_pots(active_players, amount_won)
         winners = list(dict.fromkeys(winners_by_pot))
         self.hand_active = False
 
@@ -227,6 +223,54 @@ class AllocatorGame(NoLimitHoldemGame):
             winning_cards=[],
             amount_won=amount_won,
         )
+
+    def _award_allocator_pots(self, active_players, amount_won) -> List[str]:
+        winners_by_pot = []
+        committed_levels = sorted(
+            {
+                player.total_committed
+                for player in self.players
+                if player.total_committed > 0
+            }
+        )
+        previous_level = ZERO
+
+        for level in committed_levels:
+            contributors = [
+                player
+                for player in self.players
+                if player.total_committed >= level
+            ]
+            pot_amount = (level - previous_level) * len(contributors)
+            previous_level = level
+
+            if pot_amount <= 0:
+                continue
+
+            eligible_players = [
+                player
+                for player in active_players
+                if player.total_committed >= level
+            ]
+
+            if not eligible_players:
+                continue
+
+            scores = self.calculate_scores(eligible_players)
+            best_score = max(score.total for score in scores.values())
+            pot_winners = [
+                player
+                for player in eligible_players
+                if scores[player.name].total == best_score
+            ]
+            share = pot_amount / len(pot_winners)
+
+            for winner in pot_winners:
+                winner.stack += share
+                amount_won[winner.name] = amount_won.get(winner.name, ZERO) + share
+                winners_by_pot.append(winner.name)
+
+        return winners_by_pot
 
     def table_state(self) -> Dict:
         state = super().table_state()

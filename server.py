@@ -15,6 +15,20 @@ from nlh import HandEvaluator, NoLimitHoldemGame
 from plo import PotLimitOmahaGame
 
 
+def local_ipv4_addresses():
+    addresses = []
+    try:
+        hostname = socket.gethostname()
+        for result in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            address = result[4][0]
+            if address not in addresses and not address.startswith("127."):
+                addresses.append(address)
+    except OSError:
+        pass
+
+    return addresses
+
+
 def parse_money(value, field_name, allow_zero=False):
     try:
         amount = Decimal(str(value))
@@ -1282,6 +1296,10 @@ class PokerTableSession:
                 current_client.connected = False
 
     def _ask_next_hand(self, clients):
+        responses = []
+        responses_lock = threading.Lock()
+        threads = []
+
         for client in clients:
             if self.shutdown_event.is_set():
                 return
@@ -1289,29 +1307,48 @@ class PokerTableSession:
             if client not in self.table.seated_clients():
                 continue
 
-            try:
-                client.send({"type": "request_continue"})
-                message = client.recv()
-            except Exception:
-                if self.shutdown_event.is_set():
-                    return
-                self.table.remove_client(client)
+            thread = threading.Thread(
+                target=self._collect_next_hand_response,
+                args=(client, responses, responses_lock),
+            )
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+        if self.shutdown_event.is_set():
+            return
+
+        for client, wants_next_hand in responses:
+            if wants_next_hand:
                 continue
 
-            if self.shutdown_event.is_set():
-                return
+            self.table.remove_client(client)
+            try:
+                client.send(
+                    {
+                        "type": "session_over",
+                        "message": "You left the table.",
+                    }
+                )
+            except ConnectionError:
+                pass
 
-            if not message or message.get("continue") is not True:
-                self.table.remove_client(client)
-                try:
-                    client.send(
-                        {
-                            "type": "session_over",
-                            "message": "You left the table.",
-                        }
-                    )
-                except ConnectionError:
-                    pass
+    def _collect_next_hand_response(self, client, responses, responses_lock):
+        wants_next_hand = False
+        try:
+            client.send({"type": "request_continue"})
+            message = client.recv()
+            wants_next_hand = bool(message and message.get("continue") is True)
+        except Exception:
+            wants_next_hand = False
+
+        if self.shutdown_event.is_set():
+            return
+
+        with responses_lock:
+            responses.append((client, wants_next_hand))
 
     def _broadcast_to(self, clients, message):
         for client in clients:
@@ -1374,6 +1411,7 @@ class NetworkPokerServer:
 
                 print(f"PokerMeow lobby listening on {self.host}:{self.port}")
                 print("Players can create or join tables from the client.")
+                self._print_connection_help()
                 print("Press Ctrl+C to shut down.")
 
                 while not self.shutdown_event.is_set():
@@ -1394,6 +1432,16 @@ class NetworkPokerServer:
             print("\nShutting down PokerMeow server...")
         finally:
             self.stop()
+
+    def _print_connection_help(self):
+        addresses = local_ipv4_addresses()
+        if not addresses:
+            print("Could not detect a LAN IP. Run 'ipconfig' and look for IPv4 Address.")
+            return
+
+        print("Friends on the same Wi-Fi/LAN can connect with:")
+        for address in addresses:
+            print(f"  python client.py {address} --port {self.port}")
 
     def stop(self):
         self.shutdown_event.set()
