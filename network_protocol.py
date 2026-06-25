@@ -2,6 +2,10 @@ import json
 from decimal import Decimal
 
 
+class ProtocolError(ValueError):
+    pass
+
+
 def json_default(value):
     if isinstance(value, Decimal):
         return format(value.normalize(), "f")
@@ -19,7 +23,15 @@ def recv_json(file_obj):
     if not line:
         return None
 
-    return json.loads(line)
+    try:
+        message = json.loads(line)
+    except json.JSONDecodeError as error:
+        raise ProtocolError("Malformed JSON message") from error
+
+    if not isinstance(message, dict):
+        raise ProtocolError("Protocol message must be a JSON object")
+
+    return message
 
 
 def card_text(card):

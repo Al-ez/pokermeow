@@ -10,7 +10,8 @@ try:
 except ImportError:
     msvcrt = None
 
-from network_protocol import recv_json, send_json
+from config import PORT, TIMEOUTS
+from network_protocol import ProtocolError, recv_json, send_json
 
 
 class ServerDisconnected(Exception):
@@ -421,7 +422,22 @@ class PokerClient:
         self.socket_obj = None
 
     def run(self):
-        with socket.create_connection((self.host, self.port)) as socket_obj:
+        try:
+            socket_obj = socket.create_connection(
+                (self.host, self.port),
+                timeout=TIMEOUTS["client_connect"],
+            )
+        except TimeoutError:
+            print(f"Could not connect to {self.host}:{self.port}: timed out.")
+            return
+        except ConnectionRefusedError:
+            print(f"Could not connect to {self.host}:{self.port}: connection refused.")
+            return
+        except OSError as error:
+            print(f"Could not connect to {self.host}:{self.port}: {error}")
+            return
+
+        with socket_obj:
             self.socket_obj = socket_obj
             set_disconnect_checker(self._server_disconnected)
             file_obj = socket_obj.makefile("rw", encoding="utf-8", newline="\n")
@@ -431,6 +447,9 @@ class PokerClient:
                 while True:
                     try:
                         message = recv_json(file_obj)
+                    except ProtocolError as error:
+                        print(f"Server sent an invalid message: {error}")
+                        return
                     except ConnectionResetError:
                         print("Disconnected from server.")
                         return
@@ -623,7 +642,7 @@ class PokerClient:
 def main():
     parser = argparse.ArgumentParser(description="PokerMeow network client")
     parser.add_argument("host", help="Server IP address, for example 192.168.1.23")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--name", default="")
     args = parser.parse_args()
 

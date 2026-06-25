@@ -10,7 +10,8 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 
 from allocator import AllocatorGame
-from network_protocol import recv_json, send_json, visible_state_for
+from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
+from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
 from nlh import HandEvaluator, NoLimitHoldemGame
 from plo import PotLimitOmahaGame
 
@@ -77,7 +78,12 @@ class Client:
 
         while not self.shutdown_event.is_set():
             try:
-                readable, _, _ = select.select([self.socket], [], [], 1)
+                readable, _, _ = select.select(
+                    [self.socket],
+                    [],
+                    [],
+                    TIMEOUTS["socket_select"],
+                )
             except (OSError, ValueError):
                 self.connected = False
                 return None
@@ -89,6 +95,9 @@ class Client:
                 message = recv_json(self.file)
             except socket.timeout:
                 continue
+            except ProtocolError:
+                self.connected = False
+                return None
             except (ConnectionResetError, OSError):
                 self.connected = False
                 return None
@@ -498,7 +507,7 @@ class PokerTableSession:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
             server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server_socket.bind((self.host, self.port))
-            server_socket.listen()
+            server_socket.listen(MAX_CONNECTIONS)
 
             while True:
                 socket_obj, address = server_socket.accept()
@@ -968,7 +977,7 @@ class PokerTableSession:
         }
         prompted_client = None
         countdown_started = False
-        remaining = 30
+        remaining = TIMEOUTS["disconnect_timer"]
 
         while not self.shutdown_event.is_set():
             client = self.table.client_by_name(player.name)
@@ -981,7 +990,12 @@ class PokerTableSession:
                         client.send(action_prompt)
                         prompted_client = client
 
-                    readable, _, _ = select.select([client.socket], [], [], 1)
+                    readable, _, _ = select.select(
+                        [client.socket],
+                        [],
+                        [],
+                        TIMEOUTS["socket_select"],
+                    )
                     if not readable:
                         continue
 
@@ -1009,7 +1023,7 @@ class PokerTableSession:
                         "type": "message",
                         "message": (
                             f"{player.name} disconnected. "
-                            "They have 30 seconds to reconnect."
+                            f"They have {TIMEOUTS['disconnect_timer']} seconds to reconnect."
                         ),
                     },
                 )
@@ -1406,8 +1420,8 @@ class NetworkPokerServer:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
                 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 server_socket.bind((self.host, self.port))
-                server_socket.listen()
-                server_socket.settimeout(1)
+                server_socket.listen(MAX_CONNECTIONS)
+                server_socket.settimeout(TIMEOUTS["accept"])
 
                 print(f"PokerMeow lobby listening on {self.host}:{self.port}")
                 print("Players can create or join tables from the client.")
@@ -1442,6 +1456,8 @@ class NetworkPokerServer:
         print("Friends on the same Wi-Fi/LAN can connect with:")
         for address in addresses:
             print(f"  python client.py {address} --port {self.port}")
+        print("Friends over the public Internet should connect to your public IP")
+        print(f"after your router forwards TCP port {self.port} to this computer.")
 
     def stop(self):
         self.shutdown_event.set()
@@ -1611,8 +1627,8 @@ class NetworkPokerServer:
 
 def main():
     parser = argparse.ArgumentParser(description="PokerMeow lobby server")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", default=HOST)
+    parser.add_argument("--port", type=int, default=PORT)
     args = parser.parse_args()
 
     server = NetworkPokerServer(
