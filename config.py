@@ -7,4 +7,5 @@ TIMEOUTS = {
     "socket_select": 1,
     "client_connect": 10,
     "disconnect_timer": 30,
+    "showdown_display": 3,
 }

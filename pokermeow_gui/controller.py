@@ -204,7 +204,8 @@ class ClientController:
         elif message_type == "showdown":
             self._emit("showdown", dict(message))
         elif message_type == "request_continue":
-            self._emit("continue_required", dict(message))
+            # Compatibility with older servers: the GUI always continues.
+            self.submit_continue(True)
         elif message_type == "disconnect_timer":
             self._emit("disconnect_timer", dict(message))
         elif message_type == "message":

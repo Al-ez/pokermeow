@@ -75,3 +75,14 @@ def test_controller_exposes_state_and_action_events_without_qt():
         "action": "call",
         "amount": 0,
     }
+
+
+def test_controller_auto_continues_for_legacy_servers():
+    _, connection = make_controller()
+
+    connection.on_message({"type": "request_continue"})
+
+    assert connection.sent[-1] == {
+        "type": "continue",
+        "continue": True,
+    }

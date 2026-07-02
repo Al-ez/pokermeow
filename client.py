@@ -614,12 +614,13 @@ class PokerClient:
             print("-" * 60)
             if message.get("allocator_details") is not None:
                 show_allocator_showdown(message["allocator_details"])
-            elif message.get("hands"):
+            if message.get("hands"):
                 print("Player hands:")
                 for hand_info in message["hands"]:
+                    hand_name = hand_info.get("hand_name", "unknown hand")
                     print(
                         f"  {hand_info['player']}: "
-                        f"{show_cards(hand_info['hand'])}"
+                        f"{show_cards(hand_info['hand'])} ({hand_name})"
                     )
 
             winner_hand_names = message.get("winner_hand_names", {})
@@ -640,8 +641,8 @@ class PokerClient:
                 print(f"  {name}: {amount}")
 
         elif message_type == "request_continue":
-            answer = prompt_input("\nPlay another hand? [y/n]: ").strip().lower()
-            send_json(file_obj, {"type": "continue", "continue": answer == "y"})
+            # Compatibility with older servers: continue without prompting.
+            send_json(file_obj, {"type": "continue", "continue": True})
 
         elif message_type == "session_over":
             print(message["message"])

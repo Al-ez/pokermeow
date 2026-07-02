@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from .controller import ClientController
-from .views import PokerStack
+from .views import PokerStack, compact_card_text
 
 
 class ControllerBridge(QObject):
@@ -110,15 +110,6 @@ class MainWindow(QMainWindow):
             self.pages.table.append_history(text)
         elif event == "showdown":
             self._show_showdown(payload)
-        elif event == "continue_required":
-            answer = QMessageBox.question(
-                self,
-                "Next hand",
-                "Play another hand?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            self.controller.submit_continue(answer == QMessageBox.StandardButton.Yes)
         elif event == "allocator_required":
             self._request_allocation(payload)
         elif event == "name_required":
@@ -173,18 +164,45 @@ class MainWindow(QMainWindow):
 
     def _show_showdown(self, result):
         winners = ", ".join(result.get("winners", [])) or "Unknown"
-        amounts = ", ".join(
-            f"{name}: {amount}"
-            for name, amount in result.get("amount_won", {}).items()
-        )
         hand_names = result.get("winner_hand_names", {})
-        details = ", ".join(
+        winner_details = ", ".join(
             f"{name} ({hand_names.get(name, result.get('hand_name', ''))})"
             for name in result.get("winners", [])
         )
-        summary = f"Winners: {details or winners}\nAmount won: {amounts or '—'}"
-        self.pages.table.append_history(summary.replace("\n", " · "))
-        QMessageBox.information(self, "End of hand", summary)
+        lines = ["", "SHOWDOWN"]
+        hands = result.get("hands", [])
+        self.pages.table.show_showdown_hands(hands)
+        if hands:
+            lines.append("Revealed hands:")
+            for hand_info in hands:
+                cards = " ".join(
+                    compact_card_text(card)
+                    for card in hand_info.get("hand", [])
+                )
+                rankings = hand_info.get("rankings")
+                if rankings:
+                    ranking = (
+                        f"Top: {rankings.get('top', '—')}; "
+                        f"Bottom: {rankings.get('bottom', '—')}; "
+                        f"Strength: {rankings.get('hand_strength', '—')}; "
+                        f"Total: {rankings.get('total', '—')} points"
+                    )
+                else:
+                    ranking = hand_info.get("hand_name", "Unknown hand")
+                lines.append(
+                    f"  {hand_info.get('player', 'Player')}: "
+                    f"{cards} \u2014 {ranking}"
+                )
+        else:
+            lines.append("Cards not revealed (hand won uncontested).")
+
+        winner_label = "Winner" if len(result.get("winners", [])) == 1 else "Winners"
+        lines.append(f"{winner_label}: {winner_details or winners}")
+        for name, amount in result.get("amount_won", {}).items():
+            lines.append(f"Amount won by {name}: {amount}")
+        lines.append("Next hand starts in 3 seconds.")
+        self.pages.table.append_history("\n".join(lines))
+        self.statusBar().showMessage("Showdown — next hand in 3 seconds", 3000)
 
     def _request_allocation(self, payload):
         dialog = QDialog(self)

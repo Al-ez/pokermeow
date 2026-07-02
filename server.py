@@ -823,6 +823,7 @@ class PokerTableSession:
 
             result = self.game.showdown()
             if result.hand_name == "uncontested":
+                player_hand_names = {}
                 winner_hand_names = {
                     winner: result.hand_name
                     for winner in result.winners
@@ -830,35 +831,77 @@ class PokerTableSession:
                 allocator_details = None
             elif self.game_class is AllocatorGame:
                 scores = self.game.calculate_scores()
+                player_hand_names = {
+                    player.name: f"{scores[player.name].total} points"
+                    for player in self.game.players
+                    if not player.folded
+                }
                 winner_hand_names = {
-                    winner: f"{scores[winner].total} points"
+                    winner: player_hand_names[winner]
                     for winner in result.winners
                 }
                 allocator_details = self._allocator_showdown_details()
-            elif len(self.game.board) == 5:
+            elif self.game_class is PotLimitOmahaGame and len(self.game.board) == 5:
+                player_hand_names = {
+                    player.name: self.game._best_plo_hand(
+                        player.hand,
+                        self.game.board,
+                    )[3]
+                    for player in self.game.players
+                    if not player.folded
+                }
                 winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
+                }
+                allocator_details = None
+            elif len(self.game.board) == 5:
+                player_hand_names = {
                     player.name: HandEvaluator.best_hand(player.hand + self.game.board)[3]
                     for player in self.game.players
-                    if player.name in result.winners and not player.folded
+                    if not player.folded
+                }
+                winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
                 }
                 allocator_details = None
             else:
+                player_hand_names = {
+                    player.name: result.hand_name
+                    for player in self.game.players
+                    if not player.folded
+                }
                 winner_hand_names = {
-                    winner: result.hand_name
+                    winner: player_hand_names[winner]
                     for winner in result.winners
                 }
                 allocator_details = None
 
             revealed_hands = []
             if result.hand_name != "uncontested":
-                revealed_hands = [
-                    {
+                for player in self.game.players:
+                    if player.folded:
+                        continue
+                    hand_info = {
                         "player": player.name,
                         "hand": [str(card) for card in player.hand],
+                        "hand_name": player_hand_names[player.name],
                     }
-                    for player in self.game.players
-                    if not player.folded
-                ]
+                    if allocator_details is not None:
+                        hand_info["rankings"] = {
+                            "top": allocator_details["top"]["players"][
+                                player.name
+                            ]["hand_name"],
+                            "bottom": allocator_details["bottom"]["players"][
+                                player.name
+                            ]["hand_name"],
+                            "hand_strength": allocator_details[
+                                "hand_strength"
+                            ]["players"][player.name]["label"],
+                            "total": allocator_details["totals"][player.name],
+                        }
+                    revealed_hands.append(hand_info)
 
             self._send_states_to(seated_clients)
             self._broadcast_to(
@@ -868,6 +911,7 @@ class PokerTableSession:
                     "winners": result.winners,
                     "hand_name": result.hand_name,
                     "winner_hand_names": winner_hand_names,
+                    "player_hand_names": player_hand_names,
                     "board": [str(card) for card in self.game.board],
                     "top_board": (
                         [str(card) for card in self.game.top_board]
@@ -885,8 +929,8 @@ class PokerTableSession:
                 },
             )
 
+            self.shutdown_event.wait(TIMEOUTS["showdown_display"])
             self.table.update_stacks(self.game)
-            self._ask_next_hand(seated_clients)
             self.dealer_index = (self.game.dealer_index + 1) % len(self.game.players)
         finally:
             self.table.mark_hand_finished()
@@ -1350,61 +1394,6 @@ class PokerTableSession:
                 )
             except ConnectionError:
                 current_client.connected = False
-
-    def _ask_next_hand(self, clients):
-        responses = []
-        responses_lock = threading.Lock()
-        threads = []
-
-        for client in clients:
-            if self.shutdown_event.is_set():
-                return
-
-            if client not in self.table.seated_clients():
-                continue
-
-            thread = threading.Thread(
-                target=self._collect_next_hand_response,
-                args=(client, responses, responses_lock),
-            )
-            thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
-
-        if self.shutdown_event.is_set():
-            return
-
-        for client, wants_next_hand in responses:
-            if wants_next_hand:
-                continue
-
-            self.table.remove_client(client)
-            try:
-                client.send(
-                    {
-                        "type": "session_over",
-                        "message": "You left the table.",
-                    }
-                )
-            except ConnectionError:
-                pass
-
-    def _collect_next_hand_response(self, client, responses, responses_lock):
-        wants_next_hand = False
-        try:
-            client.send({"type": "request_continue"})
-            message = client.recv()
-            wants_next_hand = bool(message and message.get("continue") is True)
-        except Exception:
-            wants_next_hand = False
-
-        if self.shutdown_event.is_set():
-            return
-
-        with responses_lock:
-            responses.append((client, wants_next_hand))
 
     def _broadcast_to(self, clients, message):
         for client in clients:

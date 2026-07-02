@@ -322,7 +322,9 @@ class TableView(QWidget):
         players_box = QGroupBox("Players")
         players_layout = QVBoxLayout(players_box)
         self.players = QTreeWidget()
-        self.players.setHeaderLabels(["Player", "Stack", "Bet", "Status"])
+        self.players.setHeaderLabels(
+            ["Player", "Stack", "Bet", "Status", "Cards", "Hand"]
+        )
         self.players.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         players_layout.addWidget(self.players)
         root.addWidget(players_box, 2, 0)
@@ -416,6 +418,8 @@ class TableView(QWidget):
                     str(player.get("stack", 0)),
                     str(player.get("current_bet", 0)),
                     ", ".join(statuses) or "Playing",
+                    "",
+                    "",
                 ]
             )
             if name == dealer:
@@ -424,6 +428,38 @@ class TableView(QWidget):
                 item.setFont(0, font)
             self.players.addTopLevelItem(item)
         self.hole_cards.set_cards(own_hand)
+
+    def show_showdown_hands(self, hands):
+        hands_by_player = {
+            hand.get("player"): hand
+            for hand in hands
+            if hand.get("player")
+        }
+        for index in range(self.players.topLevelItemCount()):
+            item = self.players.topLevelItem(index)
+            hand_info = hands_by_player.get(item.text(0))
+            if hand_info is None:
+                item.setText(4, "")
+                item.setText(5, "")
+                continue
+            cards = " ".join(
+                compact_card_text(card)
+                for card in hand_info.get("hand", [])
+            )
+            rankings = hand_info.get("rankings")
+            if rankings:
+                ranking = (
+                    f"Top {rankings.get('top', '—')} / "
+                    f"Bottom {rankings.get('bottom', '—')} / "
+                    f"{rankings.get('hand_strength', '—')} / "
+                    f"{rankings.get('total', '—')} pts"
+                )
+            else:
+                ranking = hand_info.get("hand_name", "Unknown hand")
+            item.setText(4, cards)
+            item.setText(5, ranking)
+            item.setToolTip(4, cards)
+            item.setToolTip(5, ranking)
 
     def set_legal_actions(self, request):
         legal = set(request.get("legal_actions", []))
