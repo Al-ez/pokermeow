@@ -52,6 +52,16 @@ def compact_card_text(card):
     return f"{rank}{SUIT_SYMBOLS.get(suit.lower(), suit)}"
 
 
+def is_red_card(card):
+    card_text = str(card).lower()
+    return (
+        card_text.endswith("hearts")
+        or card_text.endswith("diamonds")
+        or "\u2665" in card_text
+        or "\u2666" in card_text
+    )
+
+
 def display_amount(value):
     try:
         amount = Decimal(str(value))
@@ -86,7 +96,10 @@ class CardRow(QWidget):
             label = QLabel(compact_card_text(card))
             label.setToolTip(full_text)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setStyleSheet(CARD_STYLE)
+            style = CARD_STYLE
+            if is_red_card(card):
+                style += "\nQLabel { color: #dc2626; }"
+            label.setStyleSheet(style)
             self.row_layout.addWidget(label)
 
 

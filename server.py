@@ -184,7 +184,11 @@ class Table:
         activated = []
         with self.lock:
             for index, seat in enumerate(self.seats):
-                if seat is not None and seat.reserved:
+                if (
+                    seat is not None
+                    and seat.reserved
+                    and seat.stack > 0
+                ):
                     seat.reserved = False
                     activated.append((seat.client, index + 1))
 
@@ -329,10 +333,11 @@ class Table:
                 if seat is None:
                     continue
 
-                if seat.client.name in stacks:
-                    seat.stack = stacks[seat.client.name]
-
+                if seat.client.name not in stacks:
+                    continue
+                seat.stack = stacks[seat.client.name]
                 if seat.stack <= 0:
+                    seat.reserved = True
                     busted.append(seat.client)
         return busted
 
@@ -1418,7 +1423,6 @@ class PokerTableSession:
         }
 
     def _offer_rebuys(self, busted_clients):
-        threads = []
         for client in busted_clients:
             thread = threading.Thread(
                 target=self._handle_rebuy,
@@ -1426,10 +1430,6 @@ class PokerTableSession:
                 daemon=True,
             )
             thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
 
     def _handle_rebuy(self, client):
         rebuy_amount = None

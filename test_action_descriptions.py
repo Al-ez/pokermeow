@@ -1,4 +1,5 @@
 from decimal import Decimal
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -57,7 +58,7 @@ def test_net_winnings_exclude_the_winners_own_contribution():
 
 
 def test_busted_seat_is_held_until_rebuy_decision():
-    client = SimpleNamespace(name="Alice")
+    client = SimpleNamespace(name="Alice", send=lambda message: None)
     table = Table(max_seats=2)
     table.seats[0] = Seat(client=client, stack=Decimal("100"))
     game = SimpleNamespace(
@@ -69,8 +70,11 @@ def test_busted_seat_is_held_until_rebuy_decision():
     assert busted == [client]
     assert table.seats[0].client is client
     assert table.seats[0].stack == Decimal("0")
+    assert table.seats[0].reserved is True
     assert table.set_stack(client, Decimal("500")) is True
     assert table.seats[0].stack == Decimal("500")
+    table.activate_reserved_seats()
+    assert table.seats[0].reserved is False
 
 
 def test_valid_rebuy_restores_the_stack_and_keeps_the_seat():
@@ -110,3 +114,36 @@ def test_valid_rebuy_restores_the_stack_and_keeps_the_seat():
     assert removed == []
     assert client.buy_in == Decimal("500")
     assert sent[-1]["type"] == "rebought"
+
+
+def test_rebuy_offer_does_not_block_the_table_loop():
+    started = threading.Event()
+    release = threading.Event()
+    session = object.__new__(PokerTableSession)
+    session._handle_rebuy = lambda client: (
+        started.set(),
+        release.wait(1),
+    )
+
+    session._offer_rebuys([SimpleNamespace(name="Alice")])
+
+    assert started.wait(0.2)
+    release.set()
+
+
+def test_pending_rebuy_is_not_prompted_again_after_another_hand():
+    pending_client = SimpleNamespace(name="Alice")
+    table = Table(max_seats=2)
+    table.seats[0] = Seat(
+        client=pending_client,
+        stack=Decimal("0"),
+        reserved=True,
+    )
+    another_hand = SimpleNamespace(
+        players=[SimpleNamespace(name="Bob", stack=Decimal("100"))]
+    )
+
+    busted = table.update_stacks(another_hand)
+
+    assert busted == []
+    assert table.seats[0].reserved is True

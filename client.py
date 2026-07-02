@@ -17,7 +17,6 @@ from network_protocol import ProtocolError, recv_json, send_json
 class ServerDisconnected(Exception):
     pass
 
-
 _disconnect_checker = None
 
 
