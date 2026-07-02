@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from pokermeow_gui.controller import ClientController
 
 
@@ -85,4 +87,21 @@ def test_controller_auto_continues_for_legacy_servers():
     assert connection.sent[-1] == {
         "type": "continue",
         "continue": True,
+    }
+
+
+def test_controller_submits_rebuy_or_leave():
+    controller, connection = make_controller()
+
+    controller.submit_rebuy("750.50")
+    assert connection.sent[-1] == {
+        "type": "rebuy",
+        "rebuy": True,
+        "amount": Decimal("750.50"),
+    }
+
+    controller.submit_rebuy()
+    assert connection.sent[-1] == {
+        "type": "rebuy",
+        "rebuy": False,
     }

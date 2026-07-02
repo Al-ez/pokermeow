@@ -325,7 +325,7 @@ class Table:
 
         busted = []
         with self.lock:
-            for index, seat in enumerate(self.seats):
+            for seat in self.seats:
                 if seat is None:
                     continue
 
@@ -334,15 +334,15 @@ class Table:
 
                 if seat.stack <= 0:
                     busted.append(seat.client)
-                    self.seats[index] = None
+        return busted
 
-        for client in busted:
-            client.send(
-                {
-                    "type": "session_over",
-                    "message": "You are out of chips. Your seat is now open.",
-                }
-            )
+    def set_stack(self, client, amount):
+        with self.lock:
+            for seat in self.seats:
+                if seat is not None and seat.client is client:
+                    seat.stack = amount
+                    return True
+        return False
 
     def remove_client(self, client):
         removed = False
@@ -924,13 +924,14 @@ class PokerTableSession:
                         else None
                     ),
                     "allocator_details": allocator_details,
-                    "amount_won": result.amount_won,
+                    "amount_won": self._net_winnings(result.amount_won),
                     "hands": revealed_hands,
                 },
             )
 
             self.shutdown_event.wait(TIMEOUTS["showdown_display"])
-            self.table.update_stacks(self.game)
+            busted_clients = self.table.update_stacks(self.game)
+            self._offer_rebuys(busted_clients)
             self.dealer_index = (self.game.dealer_index + 1) % len(self.game.players)
         finally:
             self.table.mark_hand_finished()
@@ -1405,6 +1406,82 @@ class PokerTableSession:
                 current_client.send(message)
             except ConnectionError:
                 current_client.connected = False
+
+    def _net_winnings(self, gross_winnings):
+        contributions = {
+            player.name: player.total_committed
+            for player in self.game.players
+        }
+        return {
+            name: amount - contributions.get(name, 0)
+            for name, amount in gross_winnings.items()
+        }
+
+    def _offer_rebuys(self, busted_clients):
+        threads = []
+        for client in busted_clients:
+            thread = threading.Thread(
+                target=self._handle_rebuy,
+                args=(client,),
+                daemon=True,
+            )
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+    def _handle_rebuy(self, client):
+        rebuy_amount = None
+        try:
+            client.send(
+                {
+                    "type": "request_rebuy",
+                    "message": "You are out of chips. Rebuy to keep your seat.",
+                    "default_amount": client.buy_in,
+                    "seconds": TIMEOUTS["rebuy"],
+                }
+            )
+            readable, _, _ = select.select(
+                [client.socket],
+                [],
+                [],
+                TIMEOUTS["rebuy"],
+            )
+            if readable:
+                response = client.recv()
+                if response and response.get("type") == "rebuy":
+                    if response.get("rebuy") is True:
+                        amount = parse_money(response.get("amount"), "Rebuy")
+                        if amount > 0:
+                            rebuy_amount = amount
+        except (ConnectionError, OSError, TypeError, ValueError):
+            rebuy_amount = None
+
+        if rebuy_amount is not None and self.table.set_stack(client, rebuy_amount):
+            client.buy_in = rebuy_amount
+            try:
+                client.send(
+                    {
+                        "type": "rebought",
+                        "amount": rebuy_amount,
+                        "message": f"Rebuy successful. Your stack is {rebuy_amount}.",
+                    }
+                )
+            except ConnectionError:
+                self.table.remove_client(client)
+            return
+
+        self.table.remove_client(client)
+        try:
+            client.send(
+                {
+                    "type": "session_over",
+                    "message": "You left the table after busting.",
+                }
+            )
+        except ConnectionError:
+            pass
 
     def _client_by_name(self, name, clients):
         current_client = self.table.client_by_name(name)

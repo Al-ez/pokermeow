@@ -111,6 +111,24 @@ class ClientController:
     def submit_continue(self, wants_to_continue):
         self._send({"type": "continue", "continue": bool(wants_to_continue)})
 
+    def submit_rebuy(self, amount=None):
+        if amount is None:
+            self._send({"type": "rebuy", "rebuy": False})
+            return
+        try:
+            parsed_amount = Decimal(str(amount))
+        except InvalidOperation as error:
+            raise ValueError("Rebuy amount must be a number") from error
+        if not parsed_amount.is_finite() or parsed_amount <= 0:
+            raise ValueError("Rebuy amount must be greater than zero")
+        self._send(
+            {
+                "type": "rebuy",
+                "rebuy": True,
+                "amount": parsed_amount,
+            }
+        )
+
     def submit_name(self, name):
         name = str(name).strip()
         if not name:
@@ -206,6 +224,14 @@ class ClientController:
         elif message_type == "request_continue":
             # Compatibility with older servers: the GUI always continues.
             self.submit_continue(True)
+        elif message_type == "request_rebuy":
+            self._emit("rebuy_required", dict(message))
+        elif message_type == "rebought":
+            try:
+                self.buy_in = Decimal(str(message.get("amount", self.buy_in)))
+            except InvalidOperation:
+                pass
+            self._emit("rebought", dict(message))
         elif message_type == "disconnect_timer":
             self._emit("disconnect_timer", dict(message))
         elif message_type == "message":

@@ -220,6 +220,26 @@ def ask_buy_in():
         return amount
 
 
+def ask_rebuy(default_amount):
+    while True:
+        raw_amount = prompt_input(
+            f"Rebuy amount [{default_amount}] (blank to leave): "
+        ).strip()
+        if not raw_amount:
+            return None
+        try:
+            amount = Decimal(raw_amount)
+            if not amount.is_finite():
+                raise InvalidOperation
+        except InvalidOperation:
+            print("Please enter a valid number.")
+            continue
+        if amount <= 0:
+            print("Rebuy must be greater than zero.")
+            continue
+        return amount
+
+
 def ask_blinds():
     options = [
         ("1", "0.1/0.2", Decimal("0.2")),
@@ -643,6 +663,21 @@ class PokerClient:
         elif message_type == "request_continue":
             # Compatibility with older servers: continue without prompting.
             send_json(file_obj, {"type": "continue", "continue": True})
+
+        elif message_type == "request_rebuy":
+            print(f"\n{message.get('message', 'You are out of chips.')}")
+            amount = ask_rebuy(message.get("default_amount", "1000"))
+            send_json(
+                file_obj,
+                {
+                    "type": "rebuy",
+                    "rebuy": amount is not None,
+                    "amount": amount or 0,
+                },
+            )
+
+        elif message_type == "rebought":
+            print(message.get("message", "Rebuy successful."))
 
         elif message_type == "session_over":
             print(message["message"])

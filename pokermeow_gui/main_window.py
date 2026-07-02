@@ -1,13 +1,16 @@
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -28,6 +31,8 @@ class MainWindow(QMainWindow):
         self.pages = PokerStack()
         self.setCentralWidget(self.pages)
         self.bridge = ControllerBridge()
+        self._leaving_after_bust = False
+        self._rebuy_dialog = None
         self.bridge.event_received.connect(self._handle_event)
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
@@ -110,6 +115,13 @@ class MainWindow(QMainWindow):
             self.pages.table.append_history(text)
         elif event == "showdown":
             self._show_showdown(payload)
+        elif event == "rebuy_required":
+            self._request_rebuy(payload)
+        elif event == "rebought":
+            self._leaving_after_bust = False
+            message = payload.get("message", "Rebuy successful.")
+            self.pages.table.append_history(message)
+            self.statusBar().showMessage(message, 5000)
         elif event == "allocator_required":
             self._request_allocation(payload)
         elif event == "name_required":
@@ -120,9 +132,15 @@ class MainWindow(QMainWindow):
             self.pages.table.append_history(f"Error: {payload}")
             QMessageBox.warning(self, "PokerMeow", str(payload))
         elif event == "session_over":
-            QMessageBox.information(self, "Session ended", str(payload))
+            if self._rebuy_dialog is not None:
+                self._rebuy_dialog.reject()
+            if not self._leaving_after_bust:
+                QMessageBox.information(self, "Session ended", str(payload))
+            self._leaving_after_bust = False
             self._leave()
         elif event == "disconnected":
+            if self._rebuy_dialog is not None:
+                self._rebuy_dialog.reject()
             self.statusBar().showMessage(str(payload))
             self.pages.menu.set_status(str(payload))
             self.pages.setCurrentWidget(self.pages.menu)
@@ -161,6 +179,60 @@ class MainWindow(QMainWindow):
         )
         if accepted and table_id.strip():
             self.controller.submit_table_id(table_id)
+
+    def _request_rebuy(self, request):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Rebuy")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                request.get(
+                    "message",
+                    "You are out of chips. Rebuy to keep your seat.",
+                )
+            )
+        )
+        amount = QDoubleSpinBox()
+        amount.setRange(0.01, 1_000_000_000)
+        amount.setDecimals(2)
+        amount.setValue(
+            float(request.get("default_amount", self.controller.buy_in))
+        )
+        form = QFormLayout()
+        form.addRow("Rebuy amount", amount)
+        layout.addLayout(form)
+        seconds = request.get("seconds")
+        if seconds:
+            timeout_label = QLabel(
+                f"Your seat will be released after {seconds} seconds."
+            )
+            timeout_label.setObjectName("muted")
+            layout.addWidget(timeout_label)
+            QTimer.singleShot(
+                max(1, int(seconds) - 1) * 1000,
+                dialog.reject,
+            )
+
+        buttons = QHBoxLayout()
+        rebuy_button = QPushButton("Rebuy")
+        rebuy_button.setObjectName("primary")
+        leave_button = QPushButton("Leave")
+        buttons.addWidget(rebuy_button)
+        buttons.addWidget(leave_button)
+        layout.addLayout(buttons)
+        rebuy_button.clicked.connect(dialog.accept)
+        leave_button.clicked.connect(dialog.reject)
+
+        self._rebuy_dialog = dialog
+        result = dialog.exec()
+        self._rebuy_dialog = None
+        if not self.controller.connected:
+            return
+        if result == QDialog.DialogCode.Accepted:
+            self.controller.submit_rebuy(amount.value())
+        else:
+            self._leaving_after_bust = True
+            self.controller.submit_rebuy()
 
     def _show_showdown(self, result):
         winners = ", ".join(result.get("winners", [])) or "Unknown"
