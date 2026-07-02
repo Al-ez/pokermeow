@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -28,11 +30,36 @@ CARD_STYLE = """
         color: #111827;
         border: 1px solid #cbd5e1;
         border-radius: 6px;
-        padding: 10px 7px;
-        min-width: 34px;
+        padding: 8px 5px;
+        min-width: 26px;
         font-weight: 700;
     }
 """
+
+SUIT_SYMBOLS = {
+    "clubs": "\u2663",
+    "diamonds": "\u2666",
+    "hearts": "\u2665",
+    "spades": "\u2660",
+}
+
+
+def compact_card_text(card):
+    card_text = str(card)
+    rank, separator, suit = card_text.partition(" of ")
+    if not separator:
+        return card_text
+    return f"{rank}{SUIT_SYMBOLS.get(suit.lower(), suit)}"
+
+
+def display_amount(value):
+    try:
+        amount = Decimal(str(value))
+        if amount.is_finite():
+            return format(amount.normalize(), "f")
+    except (InvalidOperation, TypeError, ValueError):
+        pass
+    return str(value)
 
 
 class CardRow(QWidget):
@@ -55,7 +82,9 @@ class CardRow(QWidget):
             self.row_layout.addWidget(label)
             return
         for card in cards:
-            label = QLabel(str(card))
+            full_text = str(card)
+            label = QLabel(compact_card_text(card))
+            label.setToolTip(full_text)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setStyleSheet(CARD_STYLE)
             self.row_layout.addWidget(label)
@@ -400,6 +429,11 @@ class TableView(QWidget):
         legal = set(request.get("legal_actions", []))
         for action, button in self.action_buttons.items():
             button.setEnabled(action in legal)
+        to_call = request.get("to_call", 0)
+        call_text = display_amount(to_call)
+        self.action_buttons["call"].setText(
+            f"Call {call_text}" if "call" in legal else "Call"
+        )
         uses_amount = bool(legal.intersection({"bet", "raise"}))
         self.amount.setEnabled(uses_amount)
         minimum = request.get("min_raise_to", request.get("min_raise", 0)) or 0
@@ -407,8 +441,7 @@ class TableView(QWidget):
         self.amount.setMinimum(float(minimum))
         self.amount.setMaximum(float(maximum) if maximum is not None else 1_000_000_000)
         self.amount.setValue(float(minimum))
-        to_call = request.get("to_call", 0)
-        self.turn.setText(f"Your turn · call {to_call}")
+        self.turn.setText(f"Your turn \u00b7 call {call_text}")
         self.turn.setObjectName("turnActive")
         self.turn.style().unpolish(self.turn)
         self.turn.style().polish(self.turn)
@@ -416,6 +449,7 @@ class TableView(QWidget):
     def clear_legal_actions(self):
         for button in self.action_buttons.values():
             button.setEnabled(False)
+        self.action_buttons["call"].setText("Call")
         self.amount.setEnabled(False)
         self.turn.setText("Waiting for another player")
 

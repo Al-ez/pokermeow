@@ -940,6 +940,7 @@ class PokerTableSession:
                 "Amount",
                 allow_zero=True,
             )
+            previous_current_bet = self.game.current_bet
             try:
                 result = self.game.act(player.name, action, amount)
             except ValueError as error:
@@ -954,7 +955,13 @@ class PokerTableSession:
 
             self._broadcast_to(
                 seated_clients,
-                {"type": "message", "message": self._describe_action(result)},
+                {
+                    "type": "message",
+                    "message": self._describe_action(
+                        result,
+                        previous_current_bet,
+                    ),
+                },
             )
 
     def _request_action_with_disconnect_timer(self, player, legal_actions, seated_clients):
@@ -1418,7 +1425,7 @@ class PokerTableSession:
         raise RuntimeError(f"No seated client named {name}")
 
     @staticmethod
-    def _describe_action(result):
+    def _describe_action(result, previous_current_bet=0):
         if result.action == "check":
             return f"{result.player} checks."
 
@@ -1432,7 +1439,11 @@ class PokerTableSession:
             return f"{result.player} bets {result.amount}."
 
         if result.action == "raise":
-            return f"{result.player} raises {result.amount} to {result.current_bet}."
+            raise_amount = result.current_bet - previous_current_bet
+            return (
+                f"{result.player} raises {raise_amount} "
+                f"to {result.current_bet}."
+            )
 
         if result.action == "all_in":
             return f"{result.player} goes all-in for {result.amount}."
