@@ -1,4 +1,4 @@
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -370,34 +370,93 @@ class TableView(QWidget):
         root.addLayout(side, 1, 1, 2, 1)
 
         actions = QGroupBox("Betting controls")
-        actions_layout = QHBoxLayout(actions)
+        actions_layout = QVBoxLayout(actions)
+
+        self.sizing_panel = QWidget()
+        sizing_layout = QHBoxLayout(self.sizing_panel)
+        sizing_layout.setContentsMargins(0, 0, 0, 0)
+        self.custom_size_button = QPushButton("Custom")
+        self.custom_size_button.clicked.connect(self._show_custom_amount)
+        sizing_layout.addWidget(self.custom_size_button)
+        self.preset_buttons = {}
+        for label, fraction in (
+            ("1/3", Decimal(1) / Decimal(3)),
+            ("1/2", Decimal(1) / Decimal(2)),
+            ("3/4", Decimal(3) / Decimal(4)),
+            ("Pot", Decimal(1)),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(
+                lambda checked=False, selected=fraction: self._send_preset(
+                    selected
+                )
+            )
+            self.preset_buttons[label] = button
+            sizing_layout.addWidget(button)
+        self.cancel_size_button = QPushButton("Cancel")
+        self.cancel_size_button.clicked.connect(self._close_sizing)
+        sizing_layout.addWidget(self.cancel_size_button)
+        self.sizing_panel.setVisible(False)
+        actions_layout.addWidget(self.sizing_panel)
+
+        self.custom_amount_panel = QWidget()
+        custom_layout = QHBoxLayout(self.custom_amount_panel)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        self.custom_amount_label = QLabel("Amount")
+        self.custom_amount = QDoubleSpinBox()
+        self.custom_amount.setRange(0, 1_000_000_000)
+        self.custom_amount.setDecimals(2)
+        self.custom_submit = QPushButton("Submit")
+        self.custom_submit.setObjectName("primary")
+        self.custom_submit.clicked.connect(self._send_custom_amount)
+        self.custom_cancel_button = QPushButton("Cancel")
+        self.custom_cancel_button.clicked.connect(self._close_sizing)
+        custom_layout.addWidget(self.custom_amount_label)
+        custom_layout.addWidget(self.custom_amount)
+        custom_layout.addWidget(self.custom_submit)
+        custom_layout.addWidget(self.custom_cancel_button)
+        self.custom_amount_panel.setVisible(False)
+        actions_layout.addWidget(self.custom_amount_panel)
+
+        base_actions = QHBoxLayout()
         self.action_buttons = {}
         for action in self.ACTIONS:
             button = QPushButton(action.replace("_", " ").title())
             button.setEnabled(False)
-            button.clicked.connect(
-                lambda checked=False, selected=action: self._send_action(selected)
-            )
+            if action in {"bet", "raise"}:
+                button.clicked.connect(
+                    lambda checked=False, selected=action: self._open_sizing(
+                        selected
+                    )
+                )
+            else:
+                button.clicked.connect(
+                    lambda checked=False, selected=action: self._send_action(
+                        selected
+                    )
+                )
             self.action_buttons[action] = button
-            actions_layout.addWidget(button)
-        self.amount = QDoubleSpinBox()
-        self.amount.setRange(0, 1_000_000_000)
-        self.amount.setDecimals(2)
-        self.amount.setPrefix("Amount: ")
-        self.amount.setEnabled(False)
-        actions_layout.addWidget(self.amount)
+            base_actions.addWidget(button)
         leave = QPushButton("Leave")
         leave.clicked.connect(self.leave_requested)
-        actions_layout.addWidget(leave)
+        base_actions.addWidget(leave)
+        actions_layout.addLayout(base_actions)
         root.addWidget(actions, 3, 0, 1, 2)
         root.setColumnStretch(0, 3)
         root.setColumnStretch(1, 2)
 
         self.current_table_id = None
+        self.current_pot = Decimal(0)
+        self.own_current_bet = Decimal(0)
+        self.own_stack = Decimal(0)
+        self.action_request = {}
+        self.sizing_action = None
+        self.sizing_amounts = {}
         self._set_allocator_boards(False)
 
     def update_state(self, state, table, username):
         self.pot.setText(f"Pot: {state.get('pot', 0)}")
+        self.current_pot = self._decimal(state.get("pot", 0))
         if table:
             self.set_table_context(table.get("table_id"))
             self.table_name.setText(
@@ -425,6 +484,10 @@ class TableView(QWidget):
             if name == username:
                 statuses.append("You")
                 own_hand = player.get("hand", [])
+                self.own_current_bet = self._decimal(
+                    player.get("current_bet", 0)
+                )
+                self.own_stack = self._decimal(player.get("stack", 0))
             item = QTreeWidgetItem(
                 [
                     name,
@@ -475,6 +538,8 @@ class TableView(QWidget):
             item.setToolTip(5, ranking)
 
     def set_legal_actions(self, request):
+        self._close_sizing()
+        self.action_request = dict(request)
         legal = set(request.get("legal_actions", []))
         for action, button in self.action_buttons.items():
             button.setEnabled(action in legal)
@@ -483,13 +548,6 @@ class TableView(QWidget):
         self.action_buttons["call"].setText(
             f"Call {call_text}" if "call" in legal else "Call"
         )
-        uses_amount = bool(legal.intersection({"bet", "raise"}))
-        self.amount.setEnabled(uses_amount)
-        minimum = request.get("min_raise_to", request.get("min_raise", 0)) or 0
-        maximum = request.get("max_raise_to", request.get("max_bet"))
-        self.amount.setMinimum(float(minimum))
-        self.amount.setMaximum(float(maximum) if maximum is not None else 1_000_000_000)
-        self.amount.setValue(float(minimum))
         self.turn.setText(f"Your turn \u00b7 call {call_text}")
         self.turn.setObjectName("turnActive")
         self.turn.style().unpolish(self.turn)
@@ -499,7 +557,8 @@ class TableView(QWidget):
         for button in self.action_buttons.values():
             button.setEnabled(False)
         self.action_buttons["call"].setText("Call")
-        self.amount.setEnabled(False)
+        self.action_request = {}
+        self._close_sizing()
         self.turn.setText("Waiting for another player")
 
     def append_history(self, text):
@@ -526,12 +585,113 @@ class TableView(QWidget):
         if text:
             self.chat.append(str(text))
 
-    def _send_action(self, action):
-        amount = self.amount.value() if action in {"bet", "raise"} else 0
+    def _send_action(self, action, amount=0):
         self.action_requested.emit(action, amount)
         self.clear_legal_actions()
         suffix = f" {amount:g}" if action in {"bet", "raise"} else ""
         self.append_history(f"You: {action}{suffix}")
+
+    def _open_sizing(self, action):
+        if action not in self.action_request.get("legal_actions", []):
+            return
+        self.sizing_action = action
+        self.sizing_amounts = {}
+        title = action.title()
+        self.custom_size_button.setText(f"{title} Custom")
+        for label, fraction in (
+            ("1/3", Decimal(1) / Decimal(3)),
+            ("1/2", Decimal(1) / Decimal(2)),
+            ("3/4", Decimal(3) / Decimal(4)),
+            ("Pot", Decimal(1)),
+        ):
+            amount = self._preset_amount(action, fraction)
+            self.sizing_amounts[label] = amount
+            self.preset_buttons[label].setText(
+                f"{title} {label} ({display_amount(amount)})"
+            )
+        self.custom_amount_panel.setVisible(False)
+        self.sizing_panel.setVisible(True)
+
+    def _show_custom_amount(self):
+        if self.sizing_action is None:
+            return
+        minimum, maximum = self._amount_bounds(self.sizing_action)
+        self.custom_amount_label.setText(
+            f"{self.sizing_action.title()} amount"
+        )
+        self.custom_submit.setText(self.sizing_action.title())
+        self.custom_amount.setMinimum(float(minimum))
+        self.custom_amount.setMaximum(float(maximum))
+        self.custom_amount.setValue(float(minimum))
+        self.sizing_panel.setVisible(False)
+        self.custom_amount_panel.setVisible(True)
+        self.custom_amount.setFocus()
+
+    def _send_preset(self, fraction):
+        if self.sizing_action is None:
+            return
+        amount = self._preset_amount(self.sizing_action, fraction)
+        self._send_action(self.sizing_action, float(amount))
+
+    def _send_custom_amount(self):
+        if self.sizing_action is None:
+            return
+        self._send_action(
+            self.sizing_action,
+            self.custom_amount.value(),
+        )
+
+    def _close_sizing(self):
+        self.sizing_panel.setVisible(False)
+        self.custom_amount_panel.setVisible(False)
+        self.sizing_action = None
+        self.sizing_amounts = {}
+
+    def _preset_amount(self, action, fraction):
+        to_call = self._decimal(self.action_request.get("to_call", 0))
+        if action == "bet":
+            raw_amount = self.current_pot * fraction
+        else:
+            current_table_bet = self.own_current_bet + to_call
+            pot_after_call = self.current_pot + to_call
+            raw_amount = current_table_bet + pot_after_call * fraction
+        rounded = raw_amount.quantize(
+            Decimal("0.01"),
+            rounding=ROUND_HALF_UP,
+        )
+        minimum, maximum = self._amount_bounds(action)
+        return max(minimum, min(rounded, maximum))
+
+    def _amount_bounds(self, action):
+        if action == "bet":
+            minimum = self._decimal(
+                self.action_request.get("min_raise", 0)
+            )
+            maximum_value = self.action_request.get("max_bet")
+        else:
+            minimum = self._decimal(
+                self.action_request.get(
+                    "min_raise_to",
+                    self.action_request.get("min_raise", 0),
+                )
+            )
+            maximum_value = self.action_request.get("max_raise_to")
+        if maximum_value is None:
+            maximum = self.own_current_bet + self.own_stack
+        else:
+            maximum = self._decimal(maximum_value)
+        maximum = max(minimum, maximum)
+        return minimum, maximum
+
+    @staticmethod
+    def _decimal(value):
+        try:
+            amount = Decimal(str(value))
+            if amount.is_finite():
+                return amount
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+        return Decimal(0)
 
     def _set_allocator_boards(self, allocator):
         self.board_label.setVisible(not allocator)
