@@ -255,17 +255,20 @@ class TableView(QWidget):
         top = QHBoxLayout()
         self.table_name = QLabel("Poker table")
         self.table_name.setObjectName("sectionTitle")
-        self.pot = QLabel("Pot: 0")
-        self.pot.setObjectName("pill")
         self.turn = QLabel("Waiting for action")
         top.addWidget(self.table_name)
         top.addStretch()
         top.addWidget(self.turn)
-        top.addWidget(self.pot)
         root.addLayout(top, 0, 0, 1, 2)
 
-        felt = QGroupBox("Board")
+        felt = QGroupBox("Cards")
         felt_layout = QVBoxLayout(felt)
+        cards_heading = QHBoxLayout()
+        cards_heading.addStretch()
+        self.pot = QLabel("Pot: 0")
+        self.pot.setObjectName("pill")
+        cards_heading.addWidget(self.pot)
+        felt_layout.addLayout(cards_heading)
         self.board_label = QLabel("Community cards")
         self.board = CardRow()
         self.top_board_label = QLabel("Top board")
@@ -346,11 +349,13 @@ class TableView(QWidget):
         root.setColumnStretch(0, 3)
         root.setColumnStretch(1, 2)
 
+        self.current_table_id = None
         self._set_allocator_boards(False)
 
     def update_state(self, state, table, username):
         self.pot.setText(f"Pot: {state.get('pot', 0)}")
         if table:
+            self.set_table_context(table.get("table_id"))
             self.table_name.setText(
                 f"{table.get('game', 'Poker')} · {table.get('table_id', '')}"
             )
@@ -417,6 +422,22 @@ class TableView(QWidget):
     def append_history(self, text):
         if text:
             self.history.append(str(text))
+
+    def start_new_hand(self):
+        self.history.clear()
+        self.append_history("New hand started.")
+
+    def set_table_context(self, table_id):
+        if not table_id or table_id == self.current_table_id:
+            return
+        self.current_table_id = table_id
+        self.history.clear()
+
+    def reset_session(self):
+        self.current_table_id = None
+        self.history.clear()
+        self.chat.clear()
+        self.clear_legal_actions()
 
     def append_chat(self, text):
         if text:

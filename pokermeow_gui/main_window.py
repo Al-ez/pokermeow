@@ -50,6 +50,7 @@ class MainWindow(QMainWindow):
 
     def _leave(self):
         self.controller.disconnect()
+        self.pages.table.reset_session()
         self.pages.setCurrentWidget(self.pages.menu)
         self.pages.menu.set_status("Disconnected.")
 
@@ -70,7 +71,9 @@ class MainWindow(QMainWindow):
         elif event == "lobby_entered":
             self.pages.lobby.configure(payload.get("is_host", False))
         elif event == "table_created":
-            self.pages.lobby.set_table_id(payload.get("table_id", ""))
+            table_id = payload.get("table_id", "")
+            self.pages.lobby.set_table_id(table_id)
+            self.pages.table.set_table_context(table_id)
             self.pages.lobby.set_status(payload.get("message", "Table created."))
         elif event == "joined":
             self.pages.lobby.set_status(
@@ -78,6 +81,7 @@ class MainWindow(QMainWindow):
             )
         elif event == "table":
             self.pages.lobby.update_table(payload)
+            self.pages.table.set_table_context(payload.get("table_id"))
         elif event == "lobby_status":
             self.pages.lobby.set_status(payload.get("message", "Waiting…"))
         elif event == "seat_required":
@@ -93,7 +97,10 @@ class MainWindow(QMainWindow):
         elif event == "action_sent":
             self.pages.table.clear_legal_actions()
         elif event == "message":
-            self.pages.table.append_history(payload)
+            if payload == "New hand started.":
+                self.pages.table.start_new_hand()
+            else:
+                self.pages.table.append_history(payload)
             self.pages.table.append_chat(f"Table: {payload}")
         elif event == "disconnect_timer":
             text = (
