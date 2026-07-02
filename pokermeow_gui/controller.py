@@ -111,6 +111,9 @@ class ClientController:
     def submit_continue(self, wants_to_continue):
         self._send({"type": "continue", "continue": bool(wants_to_continue)})
 
+    def request_leave(self):
+        self._send({"type": "leave_table"})
+
     def submit_rebuy(self, amount=None):
         if amount is None:
             self._send({"type": "rebuy", "rebuy": False})
@@ -232,6 +235,10 @@ class ClientController:
             except InvalidOperation:
                 pass
             self._emit("rebought", dict(message))
+        elif message_type == "leave_scheduled":
+            self._emit("leave_scheduled", message.get("message", ""))
+        elif message_type == "left_table":
+            self._emit("left_table", message.get("message", "You left the table."))
         elif message_type == "disconnect_timer":
             self._emit("disconnect_timer", dict(message))
         elif message_type == "message":

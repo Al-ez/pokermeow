@@ -38,6 +38,11 @@ QPushButton {
 }
 QPushButton:hover { background: #334155; }
 QPushButton:disabled { color: #64748b; background: #172033; }
+QPushButton:checked {
+    background: #2563eb;
+    color: white;
+    border-color: #3b82f6;
+}
 QPushButton#primary, QLabel#turnActive {
     background: #2563eb;
     color: white;

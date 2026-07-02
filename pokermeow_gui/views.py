@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -121,12 +122,24 @@ class MainMenuView(QWidget):
         root.addWidget(title)
         root.addWidget(subtitle)
 
+        mode_buttons = QHBoxLayout()
+        self.host_mode_button = QPushButton("Host Game")
+        self.join_mode_button = QPushButton("Join Game")
+        self.host_mode_button.setCheckable(True)
+        self.join_mode_button.setCheckable(True)
+        mode_buttons.addWidget(self.host_mode_button)
+        mode_buttons.addWidget(self.join_mode_button)
+        root.addLayout(mode_buttons)
+
         connection_box = QGroupBox("Connection")
-        form = QFormLayout(connection_box)
+        self.connection_form = QFormLayout(connection_box)
         self.host = QLineEdit("127.0.0.1")
         self.port = QSpinBox()
         self.port.setRange(1, 65535)
         self.port.setValue(PORT)
+        self.port.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         self.username = QLineEdit()
         self.username.setPlaceholderText("Your display name")
         self.table_id = QLineEdit()
@@ -135,15 +148,18 @@ class MainMenuView(QWidget):
         self.buy_in.setRange(0.01, 1_000_000_000)
         self.buy_in.setDecimals(2)
         self.buy_in.setValue(1000)
-        form.addRow("Server IP", self.host)
-        form.addRow("Port", self.port)
-        form.addRow("Username", self.username)
-        form.addRow("Table ID", self.table_id)
-        form.addRow("Buy-in", self.buy_in)
+        self.buy_in.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.connection_form.addRow("Server", self.host)
+        self.connection_form.addRow("Port", self.port)
+        self.connection_form.addRow("Username", self.username)
+        self.connection_form.addRow("Table ID", self.table_id)
+        self.connection_form.addRow("Buy-in", self.buy_in)
         root.addWidget(connection_box)
 
-        host_box = QGroupBox("New table settings")
-        host_form = QFormLayout(host_box)
+        self.host_box = QGroupBox("New table settings")
+        self.host_form = QFormLayout(self.host_box)
         self.game = QComboBox()
         self.game.addItem("No-Limit Texas Hold'em", "nlh")
         self.game.addItem("Pot-Limit Omaha", "plo")
@@ -151,34 +167,48 @@ class MainMenuView(QWidget):
         self.seats = QSpinBox()
         self.seats.setRange(2, 10)
         self.seats.setValue(6)
+        self.seats.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         self.big_blind = QDoubleSpinBox()
         self.big_blind.setRange(0.01, 1_000_000)
         self.big_blind.setValue(2)
+        self.big_blind.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         self.bomb_ante = QSpinBox()
         self.bomb_ante.setRange(1, 1_000_000)
         self.bomb_ante.setValue(10)
-        host_form.addRow("Game", self.game)
-        host_form.addRow("Seats", self.seats)
-        host_form.addRow("Big blind", self.big_blind)
-        host_form.addRow("Allocator ante", self.bomb_ante)
-        root.addWidget(host_box)
+        self.bomb_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.host_form.addRow("Game", self.game)
+        self.host_form.addRow("Seats", self.seats)
+        self.host_form.addRow("Big blind", self.big_blind)
+        self.host_form.addRow("Ante", self.bomb_ante)
+        root.addWidget(self.host_box)
 
-        buttons = QHBoxLayout()
-        host_button = QPushButton("Host Game")
-        host_button.setObjectName("primary")
-        join_button = QPushButton("Join Game")
-        buttons.addWidget(host_button)
-        buttons.addWidget(join_button)
-        root.addLayout(buttons)
+        self.connect_button = QPushButton("Host Game")
+        self.connect_button.setObjectName("primary")
+        root.addWidget(self.connect_button)
         self.status = QLabel("")
         self.status.setObjectName("muted")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(self.status)
         root.addStretch()
 
-        host_button.clicked.connect(lambda: self._submit("create"))
-        join_button.clicked.connect(lambda: self._submit("join"))
+        self.mode = "create"
+        self.host_mode_button.clicked.connect(
+            lambda: self._set_mode("create")
+        )
+        self.join_mode_button.clicked.connect(
+            lambda: self._set_mode("join")
+        )
+        self.connect_button.clicked.connect(
+            lambda: self._submit(self.mode)
+        )
         self.game.currentIndexChanged.connect(self._game_changed)
+        self._set_mode("create")
         self._game_changed()
 
     def set_status(self, text):
@@ -186,9 +216,18 @@ class MainMenuView(QWidget):
 
     def _game_changed(self):
         allocator = self.game.currentData() == "allocator"
-        self.bomb_ante.setEnabled(allocator)
-        self.big_blind.setEnabled(not allocator)
+        self.host_form.setRowVisible(self.bomb_ante, allocator)
+        self.host_form.setRowVisible(self.big_blind, not allocator)
         self.seats.setMaximum(10 if self.game.currentData() == "nlh" else 7)
+
+    def _set_mode(self, mode):
+        self.mode = mode
+        hosting = mode == "create"
+        self.host_mode_button.setChecked(hosting)
+        self.join_mode_button.setChecked(not hosting)
+        self.connection_form.setRowVisible(self.table_id, not hosting)
+        self.host_box.setVisible(hosting)
+        self.connect_button.setText("Host Game" if hosting else "Join Game")
 
     def _submit(self, mode):
         config = {
@@ -244,18 +283,22 @@ class LobbyView(QWidget):
         controls = QHBoxLayout()
         self.start_button = QPushButton("Start Game — automatic")
         self.start_button.setEnabled(False)
-        leave = QPushButton("Leave")
+        self.leave_button = QPushButton("Leave")
         controls.addWidget(self.start_button)
         controls.addStretch()
-        controls.addWidget(leave)
+        controls.addWidget(self.leave_button)
         root.addLayout(controls)
-        leave.clicked.connect(self.leave_requested)
+        self.leave_button.clicked.connect(self.leave_requested)
 
     def configure(self, is_host):
         self.start_button.setVisible(is_host)
 
     def set_status(self, text):
         self.status.setText(text)
+
+    def set_leave_pending(self, pending):
+        self.leave_button.setEnabled(not pending)
+        self.leave_button.setText("Leaving…" if pending else "Leave")
 
     def set_table_id(self, table_id):
         self.table_id.setText(f"Table {table_id or '—'}")
@@ -437,9 +480,9 @@ class TableView(QWidget):
                 )
             self.action_buttons[action] = button
             base_actions.addWidget(button)
-        leave = QPushButton("Leave")
-        leave.clicked.connect(self.leave_requested)
-        base_actions.addWidget(leave)
+        self.leave_button = QPushButton("Leave")
+        self.leave_button.clicked.connect(self.leave_requested)
+        base_actions.addWidget(self.leave_button)
         actions_layout.addLayout(base_actions)
         root.addWidget(actions, 3, 0, 1, 2)
         root.setColumnStretch(0, 3)
@@ -579,7 +622,14 @@ class TableView(QWidget):
         self.current_table_id = None
         self.history.clear()
         self.chat.clear()
+        self.set_leave_pending(False)
         self.clear_legal_actions()
+
+    def set_leave_pending(self, pending):
+        self.leave_button.setEnabled(not pending)
+        self.leave_button.setText(
+            "Leaving after hand…" if pending else "Leave"
+        )
 
     def append_chat(self, text):
         if text:

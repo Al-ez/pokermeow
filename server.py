@@ -60,6 +60,7 @@ class Client:
         self.name = None
         self.buy_in = None
         self.connected = True
+        self.leave_after_hand = False
         self.shutdown_event = shutdown_event or threading.Event()
 
     def send(self, message):
@@ -259,6 +260,7 @@ class Table:
                     old_client = seat.client
                     new_client.name = old_client.name
                     new_client.buy_in = old_client.buy_in
+                    new_client.leave_after_hand = old_client.leave_after_hand
                     new_client.connected = True
                     seat.client = new_client
                     return True
@@ -424,6 +426,10 @@ class PokerTableSession:
 
         while not self.shutdown_event.is_set():
             self._activate_reserved_and_offer_waiting_list()
+            self._poll_control_messages(
+                self.table.seated_clients(),
+                timeout=0,
+            )
 
             if len(self.table.seated_clients()) < 2:
                 print("Waiting for at least 2 seated players...")
@@ -934,8 +940,14 @@ class PokerTableSession:
                 },
             )
 
-            self.shutdown_event.wait(TIMEOUTS["showdown_display"])
+            self._wait_for_showdown_display(seated_clients)
             busted_clients = self.table.update_stacks(self.game)
+            leaving_clients = self._remove_scheduled_leavers()
+            busted_clients = [
+                client
+                for client in busted_clients
+                if client not in leaving_clients
+            ]
             self._offer_rebuys(busted_clients)
             self.dealer_index = (self.game.dealer_index + 1) % len(self.game.players)
         finally:
@@ -1043,6 +1055,14 @@ class PokerTableSession:
 
             if client.connected:
                 try:
+                    self._poll_control_messages(
+                        [
+                            seated_client
+                            for seated_client in seated_clients
+                            if seated_client.name != player.name
+                        ],
+                        timeout=0,
+                    )
                     if prompted_client is not client:
                         client.send(action_prompt)
                         prompted_client = client
@@ -1057,6 +1077,10 @@ class PokerTableSession:
                         continue
 
                     message = client.recv()
+
+                    if message and message.get("type") == "leave_table":
+                        self._handle_leave_request(client)
+                        continue
 
                     if message and message.get("type") == "action":
                         if countdown_started:
@@ -1193,6 +1217,9 @@ class PokerTableSession:
                     }
                 )
                 message = client.recv()
+                if message and message.get("type") == "leave_table":
+                    self._handle_leave_request(client)
+                    continue
                 if not message or message.get("type") != "allocator_allocation":
                     errors.append(f"{player.name} disconnected during allocation")
                     return
@@ -1421,6 +1448,102 @@ class PokerTableSession:
             name: amount - contributions.get(name, 0)
             for name, amount in gross_winnings.items()
         }
+
+    def _poll_control_messages(self, clients, timeout=0):
+        connected_clients = []
+        for client in clients:
+            current = self.table.client_by_name(client.name)
+            if current is not None and current.connected:
+                connected_clients.append(current)
+        if not connected_clients:
+            if timeout:
+                self.shutdown_event.wait(timeout)
+            return
+
+        sockets = [client.socket for client in connected_clients]
+        try:
+            readable, _, _ = select.select(sockets, [], [], timeout)
+        except (OSError, ValueError):
+            return
+        clients_by_socket = {
+            client.socket: client
+            for client in connected_clients
+        }
+        for socket_obj in readable:
+            client = clients_by_socket[socket_obj]
+            try:
+                message = client.recv()
+            except (ConnectionError, OSError):
+                client.connected = False
+                continue
+            if message and message.get("type") == "leave_table":
+                self._handle_leave_request(client)
+
+    def _handle_leave_request(self, client):
+        player = None
+        if self.game is not None:
+            player = next(
+                (
+                    game_player
+                    for game_player in self.game.players
+                    if game_player.name == client.name
+                ),
+                None,
+            )
+        if (
+            self.table.hand_in_progress
+            and player is not None
+            and not player.folded
+        ):
+            client.leave_after_hand = True
+            try:
+                client.send(
+                    {
+                        "type": "leave_scheduled",
+                        "message": (
+                            "You are still in this hand and will leave "
+                            "automatically after it ends."
+                        ),
+                    }
+                )
+            except ConnectionError:
+                client.connected = False
+            return
+        self._remove_client_from_table(client)
+
+    def _wait_for_showdown_display(self, clients):
+        deadline = time.monotonic() + TIMEOUTS["showdown_display"]
+        while not self.shutdown_event.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._poll_control_messages(
+                clients,
+                timeout=min(remaining, 0.25),
+            )
+
+    def _remove_scheduled_leavers(self):
+        leaving_clients = [
+            client
+            for client in self.table.seated_clients()
+            if client.leave_after_hand
+        ]
+        for client in leaving_clients:
+            self._remove_client_from_table(client)
+        return leaving_clients
+
+    def _remove_client_from_table(self, client):
+        client.leave_after_hand = False
+        self.table.remove_client(client)
+        try:
+            client.send(
+                {
+                    "type": "left_table",
+                    "message": "You left the table.",
+                }
+            )
+        except ConnectionError:
+            client.connected = False
 
     def _offer_rebuys(self, busted_clients):
         for client in busted_clients:

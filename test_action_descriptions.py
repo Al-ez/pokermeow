@@ -147,3 +147,56 @@ def test_pending_rebuy_is_not_prompted_again_after_another_hand():
 
     assert busted == []
     assert table.seats[0].reserved is True
+
+
+def test_active_player_leave_is_deferred_until_hand_ends():
+    sent = []
+    client = SimpleNamespace(
+        name="Alice",
+        leave_after_hand=False,
+        connected=True,
+        send=sent.append,
+    )
+    table = Table(max_seats=2)
+    table.seats[0] = Seat(client=client, stack=Decimal("100"))
+    table.hand_in_progress = True
+    session = object.__new__(PokerTableSession)
+    session.table = table
+    session.game = SimpleNamespace(
+        players=[SimpleNamespace(name="Alice", folded=False)]
+    )
+
+    session._handle_leave_request(client)
+
+    assert client.leave_after_hand is True
+    assert table.seats[0] is not None
+    assert sent[-1]["type"] == "leave_scheduled"
+
+    removed = session._remove_scheduled_leavers()
+    assert removed == [client]
+    assert table.seats[0] is None
+    assert sent[-1]["type"] == "left_table"
+
+
+def test_folded_player_can_leave_immediately():
+    sent = []
+    client = SimpleNamespace(
+        name="Alice",
+        leave_after_hand=False,
+        connected=True,
+        send=sent.append,
+    )
+    table = Table(max_seats=2)
+    table.seats[0] = Seat(client=client, stack=Decimal("100"))
+    table.hand_in_progress = True
+    session = object.__new__(PokerTableSession)
+    session.table = table
+    session.game = SimpleNamespace(
+        players=[SimpleNamespace(name="Alice", folded=True)]
+    )
+
+    session._handle_leave_request(client)
+
+    assert client.leave_after_hand is False
+    assert table.seats[0] is None
+    assert sent[-1]["type"] == "left_table"

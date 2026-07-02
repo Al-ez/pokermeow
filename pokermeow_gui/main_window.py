@@ -1,5 +1,6 @@
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -37,8 +38,8 @@ class MainWindow(QMainWindow):
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
         self.pages.menu.connect_requested.connect(self._connect)
-        self.pages.lobby.leave_requested.connect(self._leave)
-        self.pages.table.leave_requested.connect(self._leave)
+        self.pages.lobby.leave_requested.connect(self._request_leave)
+        self.pages.table.leave_requested.connect(self._request_leave)
         self.pages.table.action_requested.connect(self._submit_action)
         self.statusBar().showMessage("Ready")
 
@@ -56,8 +57,18 @@ class MainWindow(QMainWindow):
     def _leave(self):
         self.controller.disconnect()
         self.pages.table.reset_session()
+        self.pages.lobby.set_leave_pending(False)
         self.pages.setCurrentWidget(self.pages.menu)
         self.pages.menu.set_status("Disconnected.")
+
+    def _request_leave(self):
+        if not self.controller.connected:
+            self._leave()
+            return
+        self.pages.lobby.set_leave_pending(True)
+        self.pages.table.set_leave_pending(True)
+        self.statusBar().showMessage("Leave requested…")
+        self.controller.request_leave()
 
     def _submit_action(self, action, amount):
         try:
@@ -122,6 +133,16 @@ class MainWindow(QMainWindow):
             message = payload.get("message", "Rebuy successful.")
             self.pages.table.append_history(message)
             self.statusBar().showMessage(message, 5000)
+        elif event == "leave_scheduled":
+            message = str(payload) or (
+                "You will leave automatically after the current hand."
+            )
+            self.pages.table.set_leave_pending(True)
+            self.pages.table.append_history(message)
+            self.statusBar().showMessage(message)
+        elif event == "left_table":
+            self.statusBar().showMessage(str(payload), 3000)
+            self._leave()
         elif event == "allocator_required":
             self._request_allocation(payload)
         elif event == "name_required":
@@ -129,6 +150,8 @@ class MainWindow(QMainWindow):
         elif event == "table_id_required":
             self._request_table_id(str(payload))
         elif event == "error":
+            self.pages.lobby.set_leave_pending(False)
+            self.pages.table.set_leave_pending(False)
             self.pages.table.append_history(f"Error: {payload}")
             QMessageBox.warning(self, "PokerMeow", str(payload))
         elif event == "session_over":
@@ -195,6 +218,9 @@ class MainWindow(QMainWindow):
         amount = QDoubleSpinBox()
         amount.setRange(0.01, 1_000_000_000)
         amount.setDecimals(2)
+        amount.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         amount.setValue(
             float(request.get("default_amount", self.controller.buy_in))
         )

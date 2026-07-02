@@ -105,3 +105,11 @@ def test_controller_submits_rebuy_or_leave():
         "type": "rebuy",
         "rebuy": False,
     }
+
+
+def test_controller_requests_an_orderly_table_leave():
+    controller, connection = make_controller()
+
+    controller.request_leave()
+
+    assert connection.sent[-1] == {"type": "leave_table"}
