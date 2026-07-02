@@ -1,8 +1,50 @@
 # PokerMeow
 
-PokerMeow is a command-line poker server/client app. The server is authoritative:
+PokerMeow is a multiplayer poker server/client app. The server is authoritative:
 all game state, betting, table seating, reconnects, and showdown results live on
 the server.
+
+## Desktop GUI
+
+The PySide6 desktop client is an additional presentation layer. The original
+CLI client remains available for development and debugging.
+
+Install the GUI dependency:
+
+```powershell
+py -m pip install -r requirements-gui.txt
+```
+
+Start the existing server:
+
+```powershell
+py server.py
+```
+
+Then start one GUI client per player:
+
+```powershell
+py gui.py
+```
+
+Choose **Host Game** to create a table on the connected server, or enter an
+existing table ID and choose **Join Game**. "Host" means the player creating
+the table; the authoritative `server.py` process must already be running.
+
+The current server starts hands automatically when at least two players are
+seated, so seated players are shown as ready and the host-only start control is
+informational. The server protocol does not currently define player chat;
+server and game messages are shown in the Chat/Table feed panel, while message
+sending stays disabled.
+
+GUI modules are separated by responsibility:
+
+```text
+pokermeow_gui/views.py        PySide6 widgets
+pokermeow_gui/main_window.py  Qt event binding and dialogs
+pokermeow_gui/controller.py   Client workflow and protocol decisions
+pokermeow_gui/networking.py   Socket JSON transport
+```
 
 ## Start The Server
 
