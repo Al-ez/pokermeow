@@ -297,8 +297,8 @@ class LobbyView(QWidget):
         self.status.setText(text)
 
     def set_leave_pending(self, pending):
-        self.leave_button.setEnabled(not pending)
-        self.leave_button.setText("Leaving…" if pending else "Leave")
+        self.leave_button.setEnabled(True)
+        self.leave_button.setText("Cancel Leave" if pending else "Leave")
 
     def set_table_id(self, table_id):
         self.table_id.setText(f"Table {table_id or '—'}")
@@ -608,6 +608,11 @@ class TableView(QWidget):
         if text:
             self.history.append(str(text))
 
+    def set_hand_history(self, history):
+        self.history.clear()
+        for item in history:
+            self.append_history(item)
+
     def start_new_hand(self):
         self.history.clear()
         self.append_history("New hand started.")
@@ -626,10 +631,8 @@ class TableView(QWidget):
         self.clear_legal_actions()
 
     def set_leave_pending(self, pending):
-        self.leave_button.setEnabled(not pending)
-        self.leave_button.setText(
-            "Leaving after hand…" if pending else "Leave"
-        )
+        self.leave_button.setEnabled(True)
+        self.leave_button.setText("Cancel Leave" if pending else "Leave")
 
     def append_chat(self, text):
         if text:

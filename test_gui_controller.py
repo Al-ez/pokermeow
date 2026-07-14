@@ -79,6 +79,48 @@ def test_controller_exposes_state_and_action_events_without_qt():
     }
 
 
+def test_controller_exposes_standalone_table_snapshots():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+    table = {"table_id": "ABCD", "seats": []}
+
+    connection.on_message({"type": "table", "table": table})
+
+    assert controller.latest_table == table
+    assert ("table", table) in events
+
+
+def test_controller_exposes_hand_history_and_cancel_leave():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+
+    connection.on_message(
+        {
+            "type": "hand_history",
+            "history": ["New hand started.", "Alice bets 5."],
+        }
+    )
+    connection.on_message(
+        {
+            "type": "leave_cancelled",
+            "message": "Leave cancelled. You will stay at the table.",
+        }
+    )
+    controller.cancel_leave()
+
+    assert (
+        "hand_history",
+        ["New hand started.", "Alice bets 5."],
+    ) in events
+    assert (
+        "leave_cancelled",
+        "Leave cancelled. You will stay at the table.",
+    ) in events
+    assert connection.sent[-1] == {"type": "cancel_leave"}
+
+
 def test_controller_auto_continues_for_legacy_servers():
     _, connection = make_controller()
 

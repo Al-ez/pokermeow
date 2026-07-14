@@ -412,6 +412,7 @@ class PokerTableSession:
         self.pending_names = set()
         self.pending_names_lock = threading.Lock()
         self.game = None
+        self.current_hand_history = []
         self.dealer_index = 0
         self.shutdown_event = shutdown_event or threading.Event()
 
@@ -465,6 +466,7 @@ class PokerTableSession:
                     "message": f"Reconnected to table {self.table_id}.",
                 }
             )
+            self._send_reconnect_snapshot(client)
             return
 
         client.name = self._claim_unique_name(client, client.name)
@@ -485,6 +487,41 @@ class PokerTableSession:
         status["table_id"] = self.table_id
         status["game"] = self.game_name
         return status
+
+    def _send_reconnect_snapshot(self, client):
+        table_status = self._table_status()
+        try:
+            if self.game is None or not self.table.hand_in_progress:
+                client.send({"type": "table", "table": table_status})
+                return
+
+            game_player = next(
+                (
+                    player
+                    for player in self.game.players
+                    if player.name.lower() == client.name.lower()
+                ),
+                None,
+            )
+            if game_player is None:
+                client.send({"type": "table", "table": table_status})
+                return
+
+            client.send(
+                {
+                    "type": "state",
+                    "state": visible_state_for(self.game, client.name),
+                    "table": table_status,
+                }
+            )
+            client.send(
+                {
+                    "type": "hand_history",
+                    "history": list(self.current_hand_history),
+                }
+            )
+        except ConnectionError:
+            client.connected = False
 
     def _request_table_name(self, client):
         client.send({"type": "request_name"})
@@ -571,6 +608,7 @@ class PokerTableSession:
                 raise RuntimeError("Unable to reconnect player")
 
             client.send({"type": "joined", "name": client.name})
+            self._send_reconnect_snapshot(client)
             return True
 
         name = self._claim_unique_name(client, name)
@@ -753,6 +791,7 @@ class PokerTableSession:
             return
 
         self.table.mark_hand_started()
+        self.current_hand_history = []
         seated_clients = self.table.seated_clients()
         player_stacks = self.table.seated_player_stacks()
 
@@ -776,7 +815,7 @@ class PokerTableSession:
 
         try:
             self.game.start_hand()
-            self._broadcast_to(seated_clients, {"type": "message", "message": "New hand started."})
+            self._broadcast_hand_message(seated_clients, "New hand started.")
             self._send_states_to(seated_clients)
 
             if self.game_class is not AllocatorGame:
@@ -786,12 +825,9 @@ class PokerTableSession:
                 self._deal_remaining_board(seated_clients)
             elif len(self.game.active_players()) > 1:
                 self.game.deal_flop()
-                self._broadcast_to(
+                self._broadcast_hand_message(
                     seated_clients,
-                    {
-                        "type": "message",
-                        "message": "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
-                    },
+                    "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
                 )
                 self._send_states_to(seated_clients)
                 self._run_betting_round(seated_clients)
@@ -801,12 +837,9 @@ class PokerTableSession:
                     self._deal_remaining_board(seated_clients)
                 else:
                     self.game.deal_turn()
-                    self._broadcast_to(
+                    self._broadcast_hand_message(
                         seated_clients,
-                        {
-                            "type": "message",
-                            "message": "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
-                        },
+                        "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -816,12 +849,9 @@ class PokerTableSession:
                     self._deal_remaining_board(seated_clients)
                 else:
                     self.game.deal_river()
-                    self._broadcast_to(
+                    self._broadcast_hand_message(
                         seated_clients,
-                        {
-                            "type": "message",
-                            "message": "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
-                        },
+                        "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -914,6 +944,13 @@ class PokerTableSession:
                         }
                     revealed_hands.append(hand_info)
 
+            amount_won = self._net_winnings(result.amount_won)
+            self._record_showdown_history(
+                result,
+                winner_hand_names,
+                amount_won,
+                revealed_hands,
+            )
             self._send_states_to(seated_clients)
             self._broadcast_to(
                 seated_clients,
@@ -935,7 +972,7 @@ class PokerTableSession:
                         else None
                     ),
                     "allocator_details": allocator_details,
-                    "amount_won": self._net_winnings(result.amount_won),
+                    "amount_won": amount_won,
                     "hands": revealed_hands,
                 },
             )
@@ -1015,15 +1052,12 @@ class PokerTableSession:
             if action in {"bet", "raise", "all_in"} and self.game.current_bet > 0:
                 acted_players = {player.name}
 
-            self._broadcast_to(
+            self._broadcast_hand_message(
                 seated_clients,
-                {
-                    "type": "message",
-                    "message": self._describe_action(
-                        result,
-                        previous_current_bet,
-                    ),
-                },
+                self._describe_action(
+                    result,
+                    previous_current_bet,
+                ),
             )
 
     def _request_action_with_disconnect_timer(self, player, legal_actions, seated_clients):
@@ -1081,15 +1115,15 @@ class PokerTableSession:
                     if message and message.get("type") == "leave_table":
                         self._handle_leave_request(client)
                         continue
+                    if message and message.get("type") == "cancel_leave":
+                        self._handle_cancel_leave_request(client)
+                        continue
 
                     if message and message.get("type") == "action":
                         if countdown_started:
-                            self._broadcast_to(
+                            self._broadcast_hand_message(
                                 seated_clients,
-                                {
-                                    "type": "message",
-                                    "message": f"{player.name} reconnected and acted.",
-                                },
+                                f"{player.name} reconnected and acted.",
                             )
                         return message
 
@@ -1098,28 +1132,22 @@ class PokerTableSession:
 
             if not countdown_started:
                 countdown_started = True
-                self._broadcast_to(
+                self._broadcast_hand_message(
                     seated_clients,
-                    {
-                        "type": "message",
-                        "message": (
-                            f"{player.name} disconnected. "
-                            f"They have {TIMEOUTS['disconnect_timer']} seconds to reconnect."
-                        ),
-                    },
+                    (
+                        f"{player.name} disconnected. "
+                        f"They have {TIMEOUTS['disconnect_timer']} seconds to reconnect."
+                    ),
                 )
 
             if remaining <= 0:
                 timeout_action = "check" if "check" in legal_actions else "fold"
-                self._broadcast_to(
+                self._broadcast_hand_message(
                     seated_clients,
-                    {
-                        "type": "message",
-                        "message": (
-                            f"{player.name}'s reconnect timer expired. "
-                            f"Auto-{timeout_action}."
-                        ),
-                    },
+                    (
+                        f"{player.name}'s reconnect timer expired. "
+                        f"Auto-{timeout_action}."
+                    ),
                 )
                 return {"type": "action", "action": timeout_action, "amount": 0}
 
@@ -1139,44 +1167,32 @@ class PokerTableSession:
     def _deal_remaining_board(self, seated_clients):
         if len(self.game.board) < 3:
             self.game.deal_flop()
-            self._broadcast_to(
+            self._broadcast_hand_message(
                 seated_clients,
-                {
-                    "type": "message",
-                    "message": "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
-                },
+                "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
             )
 
         if len(self.game.board) < 4:
             self.game.deal_turn()
-            self._broadcast_to(
+            self._broadcast_hand_message(
                 seated_clients,
-                {
-                    "type": "message",
-                    "message": "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
-                },
+                "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
             )
 
         if len(self.game.board) < 5:
             self.game.deal_river()
-            self._broadcast_to(
+            self._broadcast_hand_message(
                 seated_clients,
-                {
-                    "type": "message",
-                    "message": "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
-                },
+                "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
             )
 
         self._send_states_to(seated_clients)
 
     def _request_allocator_allocations(self, seated_clients):
         self._send_states_to(seated_clients)
-        self._broadcast_to(
+        self._broadcast_hand_message(
             seated_clients,
-            {
-                "type": "message",
-                "message": "Allocation phase started. Waiting for all players.",
-            },
+            "Allocation phase started. Waiting for all players.",
         )
 
         errors = []
@@ -1197,12 +1213,9 @@ class PokerTableSession:
         if errors:
             raise RuntimeError(errors[0])
 
-        self._broadcast_to(
+        self._broadcast_hand_message(
             seated_clients,
-            {
-                "type": "message",
-                "message": "All allocations submitted.",
-            },
+            "All allocations submitted.",
         )
 
     def _collect_allocator_allocation(self, client, player, errors):
@@ -1219,6 +1232,9 @@ class PokerTableSession:
                 message = client.recv()
                 if message and message.get("type") == "leave_table":
                     self._handle_leave_request(client)
+                    continue
+                if message and message.get("type") == "cancel_leave":
+                    self._handle_cancel_leave_request(client)
                     continue
                 if not message or message.get("type") != "allocator_allocation":
                     errors.append(f"{player.name} disconnected during allocation")
@@ -1439,6 +1455,40 @@ class PokerTableSession:
             except ConnectionError:
                 current_client.connected = False
 
+    def _broadcast_hand_message(self, clients, text):
+        if not text:
+            return
+        self.current_hand_history.append(str(text))
+        self._broadcast_to(
+            clients,
+            {
+                "type": "message",
+                "message": str(text),
+            },
+        )
+
+    def _record_showdown_history(
+        self,
+        result,
+        winner_hand_names,
+        amount_won,
+        revealed_hands,
+    ):
+        self.current_hand_history.append("Showdown.")
+        winners = ", ".join(
+            f"{winner} ({winner_hand_names.get(winner, result.hand_name)})"
+            for winner in result.winners
+        )
+        self.current_hand_history.append(f"Winners: {winners}.")
+        for name, amount in amount_won.items():
+            self.current_hand_history.append(f"{name} wins {amount}.")
+        for hand_info in revealed_hands:
+            cards = ", ".join(hand_info.get("hand", []))
+            self.current_hand_history.append(
+                f"{hand_info['player']} shows {cards} "
+                f"({hand_info.get('hand_name', 'unknown hand')})."
+            )
+
     def _net_winnings(self, gross_winnings):
         contributions = {
             player.name: player.total_committed
@@ -1478,6 +1528,8 @@ class PokerTableSession:
                 continue
             if message and message.get("type") == "leave_table":
                 self._handle_leave_request(client)
+            elif message and message.get("type") == "cancel_leave":
+                self._handle_cancel_leave_request(client)
 
     def _handle_leave_request(self, client):
         player = None
@@ -1510,6 +1562,30 @@ class PokerTableSession:
                 client.connected = False
             return
         self._remove_client_from_table(client)
+
+    def _handle_cancel_leave_request(self, client):
+        if not client.leave_after_hand:
+            try:
+                client.send(
+                    {
+                        "type": "leave_cancelled",
+                        "message": "No pending leave request.",
+                    }
+                )
+            except ConnectionError:
+                client.connected = False
+            return
+
+        client.leave_after_hand = False
+        try:
+            client.send(
+                {
+                    "type": "leave_cancelled",
+                    "message": "Leave cancelled. You will stay at the table.",
+                }
+            )
+        except ConnectionError:
+            client.connected = False
 
     def _wait_for_showdown_display(self, clients):
         deadline = time.monotonic() + TIMEOUTS["showdown_display"]

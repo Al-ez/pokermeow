@@ -583,6 +583,17 @@ class PokerClient:
         elif message_type == "state":
             show_state(message["state"], message.get("table"))
 
+        elif message_type == "table":
+            show_table_drawing(message["table"])
+
+        elif message_type == "hand_history":
+            history = message.get("history", [])
+            if history:
+                print("\nCurrent hand history")
+                print("-" * 60)
+                for item in history:
+                    print(item)
+
         elif message_type == "message":
             print(f"\n{message['message']}")
 
@@ -677,6 +688,16 @@ class PokerClient:
 
         elif message_type == "rebought":
             print(message.get("message", "Rebuy successful."))
+
+        elif message_type == "leave_scheduled":
+            print(message.get("message", "You will leave after the current hand."))
+
+        elif message_type == "leave_cancelled":
+            print(message.get("message", "Leave cancelled."))
+
+        elif message_type == "left_table":
+            print(message.get("message", "You left the table."))
+            return True
 
         elif message_type == "session_over":
             print(message["message"])

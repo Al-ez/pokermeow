@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.pages)
         self.bridge = ControllerBridge()
         self._leaving_after_bust = False
+        self._leave_pending = False
         self._rebuy_dialog = None
         self.bridge.event_received.connect(self._handle_event)
         self.controller.subscribe("*", self.bridge.event_received.emit)
@@ -56,6 +57,7 @@ class MainWindow(QMainWindow):
 
     def _leave(self):
         self.controller.disconnect()
+        self._leave_pending = False
         self.pages.table.reset_session()
         self.pages.lobby.set_leave_pending(False)
         self.pages.setCurrentWidget(self.pages.menu)
@@ -65,6 +67,11 @@ class MainWindow(QMainWindow):
         if not self.controller.connected:
             self._leave()
             return
+        if self._leave_pending:
+            self.statusBar().showMessage("Cancelling leave request…")
+            self.controller.cancel_leave()
+            return
+        self._leave_pending = True
         self.pages.lobby.set_leave_pending(True)
         self.pages.table.set_leave_pending(True)
         self.statusBar().showMessage("Leave requested…")
@@ -109,6 +116,7 @@ class MainWindow(QMainWindow):
             self.pages.lobby.update_table(table)
             self.pages.setCurrentWidget(self.pages.table)
         elif event == "action_required":
+            self.pages.setCurrentWidget(self.pages.table)
             self.pages.table.set_legal_actions(payload)
         elif event == "action_sent":
             self.pages.table.clear_legal_actions()
@@ -118,6 +126,9 @@ class MainWindow(QMainWindow):
             else:
                 self.pages.table.append_history(payload)
             self.pages.table.append_chat(f"Table: {payload}")
+        elif event == "hand_history":
+            self.pages.table.set_hand_history(payload)
+            self.pages.setCurrentWidget(self.pages.table)
         elif event == "disconnect_timer":
             text = (
                 f"{payload.get('player')} reconnect timer: "
@@ -137,10 +148,19 @@ class MainWindow(QMainWindow):
             message = str(payload) or (
                 "You will leave automatically after the current hand."
             )
+            self._leave_pending = True
             self.pages.table.set_leave_pending(True)
             self.pages.table.append_history(message)
             self.statusBar().showMessage(message)
+        elif event == "leave_cancelled":
+            message = str(payload) or "Leave cancelled."
+            self._leave_pending = False
+            self.pages.lobby.set_leave_pending(False)
+            self.pages.table.set_leave_pending(False)
+            self.pages.table.append_history(message)
+            self.statusBar().showMessage(message, 5000)
         elif event == "left_table":
+            self._leave_pending = False
             self.statusBar().showMessage(str(payload), 3000)
             self._leave()
         elif event == "allocator_required":
@@ -150,6 +170,7 @@ class MainWindow(QMainWindow):
         elif event == "table_id_required":
             self._request_table_id(str(payload))
         elif event == "error":
+            self._leave_pending = False
             self.pages.lobby.set_leave_pending(False)
             self.pages.table.set_leave_pending(False)
             self.pages.table.append_history(f"Error: {payload}")
@@ -164,6 +185,7 @@ class MainWindow(QMainWindow):
         elif event == "disconnected":
             if self._rebuy_dialog is not None:
                 self._rebuy_dialog.reject()
+            self._leave_pending = False
             self.statusBar().showMessage(str(payload))
             self.pages.menu.set_status(str(payload))
             self.pages.setCurrentWidget(self.pages.menu)

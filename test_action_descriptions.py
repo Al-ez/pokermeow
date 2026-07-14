@@ -200,3 +200,50 @@ def test_folded_player_can_leave_immediately():
     assert client.leave_after_hand is False
     assert table.seats[0] is None
     assert sent[-1]["type"] == "left_table"
+
+
+def test_reconnected_player_gets_live_hand_state_snapshot():
+    sent = []
+    client = SimpleNamespace(
+        name="Bob",
+        connected=True,
+        send=sent.append,
+    )
+    table = Table(max_seats=2)
+    table.seats[0] = Seat(client=client, stack=Decimal("100"))
+    table.hand_in_progress = True
+    session = object.__new__(PokerTableSession)
+    session.table = table
+    session.table_id = "ABCD"
+    session.game_name = "No-Limit Texas Hold'em"
+    session.current_hand_history = ["New hand started.", "Alice bets 5."]
+    session.game = SimpleNamespace(
+        players=[SimpleNamespace(name="Bob")]
+    )
+
+    with patch("server.visible_state_for", return_value={"hero": "Bob"}):
+        session._send_reconnect_snapshot(client)
+
+    assert sent[-2]["type"] == "state"
+    assert sent[-2]["state"] == {"hero": "Bob"}
+    assert sent[-2]["table"]["table_id"] == "ABCD"
+    assert sent[-1] == {
+        "type": "hand_history",
+        "history": ["New hand started.", "Alice bets 5."],
+    }
+
+
+def test_cancel_leave_clears_scheduled_leave():
+    sent = []
+    client = SimpleNamespace(
+        name="Alice",
+        leave_after_hand=True,
+        connected=True,
+        send=sent.append,
+    )
+    session = object.__new__(PokerTableSession)
+
+    session._handle_cancel_leave_request(client)
+
+    assert client.leave_after_hand is False
+    assert sent[-1]["type"] == "leave_cancelled"

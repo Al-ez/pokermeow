@@ -114,6 +114,9 @@ class ClientController:
     def request_leave(self):
         self._send({"type": "leave_table"})
 
+    def cancel_leave(self):
+        self._send({"type": "cancel_leave"})
+
     def submit_rebuy(self, amount=None):
         if amount is None:
             self._send({"type": "rebuy", "rebuy": False})
@@ -211,6 +214,10 @@ class ClientController:
             if self.latest_table:
                 self._emit("table", self.latest_table)
             self._emit("seat_required", dict(message))
+        elif message_type == "table":
+            self.latest_table = message.get("table")
+            if self.latest_table:
+                self._emit("table", self.latest_table)
         elif message_type in {"seated", "reserved", "waiting"}:
             self._update_own_lobby_seat(message_type, message)
             self._emit("lobby_status", dict(message))
@@ -220,6 +227,8 @@ class ClientController:
             self._emit("state", dict(message))
         elif message_type == "request_action":
             self._emit("action_required", dict(message))
+        elif message_type == "hand_history":
+            self._emit("hand_history", list(message.get("history", [])))
         elif message_type == "request_allocator_allocation":
             self._emit("allocator_required", dict(message))
         elif message_type == "showdown":
@@ -237,6 +246,8 @@ class ClientController:
             self._emit("rebought", dict(message))
         elif message_type == "leave_scheduled":
             self._emit("leave_scheduled", message.get("message", ""))
+        elif message_type == "leave_cancelled":
+            self._emit("leave_cancelled", message.get("message", ""))
         elif message_type == "left_table":
             self._emit("left_table", message.get("message", "You left the table."))
         elif message_type == "disconnect_timer":
