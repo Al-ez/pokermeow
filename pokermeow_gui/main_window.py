@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .controller import ClientController
+from .allocator_dialog import AllocatorDialog
 from .views import PokerStack, compact_card_text
 
 
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self._leaving_after_bust = False
         self._leave_pending = False
         self._rebuy_dialog = None
+        self._allocator_dialog = None
         self.bridge.event_received.connect(self._handle_event)
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
@@ -166,6 +168,9 @@ class MainWindow(QMainWindow):
             self._leave()
         elif event == "allocator_required":
             self._request_allocation(payload)
+        elif event == "allocator_locked":
+            if self._allocator_dialog is not None:
+                self._allocator_dialog.lock()
         elif event == "name_required":
             self._request_new_name(str(payload))
         elif event == "table_id_required":
@@ -323,42 +328,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Showdown — next hand in 3 seconds", 3000)
 
     def _request_allocation(self, payload):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Allocator card allocation")
-        layout = QVBoxLayout(dialog)
-        hand = payload.get("hand", [])
-        layout.addWidget(QLabel("Cards: " + ", ".join(
-            f"{index}: {card}" for index, card in enumerate(hand, 1)
-        )))
-        form = QFormLayout()
-        top = QLineEdit()
-        bottom = QLineEdit()
-        strength = QLineEdit()
-        for field in (top, bottom, strength):
-            field.setPlaceholderText("Two card numbers, e.g. 1 4")
-        form.addRow("Top board cards", top)
-        form.addRow("Bottom board cards", bottom)
-        form.addRow("Hand strength cards", strength)
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        if not dialog.exec():
+        if self._allocator_dialog is not None:
+            self._allocator_dialog.raise_()
+            self._allocator_dialog.activateWindow()
             return
-        try:
-            buckets = [
-                [int(value) for value in field.text().replace(",", " ").split()]
-                for field in (top, bottom, strength)
-            ]
-            flattened = [value for bucket in buckets for value in bucket]
-            if any(len(bucket) != 2 for bucket in buckets):
-                raise ValueError("Choose exactly two cards for each row.")
-            if sorted(flattened) != list(range(1, 7)):
-                raise ValueError("Use every card number from 1 to 6 exactly once.")
-            self.controller.submit_allocator_allocation(*buckets)
-        except ValueError as error:
-            QMessageBox.warning(self, "Invalid allocation", str(error))
+        dialog = AllocatorDialog(
+            payload.get("hand", []),
+            payload.get("top_board", []),
+            payload.get("bottom_board", []),
+            self,
+        )
+        self._allocator_dialog = dialog
+        dialog.submitted.connect(self.controller.submit_allocator_allocation)
+        dialog.finished.connect(lambda _result: setattr(self, "_allocator_dialog", None))
+        dialog.open()

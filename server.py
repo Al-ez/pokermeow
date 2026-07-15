@@ -73,7 +73,7 @@ class Client:
             self.connected = False
             raise ConnectionError("Client is disconnected") from error
 
-    def recv(self):
+    def recv(self, stop_event=None):
         if not self.connected:
             return None
 
@@ -426,6 +426,8 @@ class PokerTableSession:
         print(f"Table has {self.table.max_seats} seats.")
 
         while not self.shutdown_event.is_set():
+            if stop_event is not None and stop_event.is_set():
+                return None
             self._activate_reserved_and_offer_waiting_list()
             self._poll_control_messages(
                 self.table.seated_clients(),
@@ -1197,12 +1199,19 @@ class PokerTableSession:
 
         errors = []
         threads = []
+        submitted = set()
+        submitted_lock = threading.Lock()
+        all_submitted = threading.Event()
+        active_players = list(self.game.active_players())
 
-        for player in list(self.game.active_players()):
+        for player in active_players:
             client = self._client_by_name(player.name, seated_clients)
             thread = threading.Thread(
                 target=self._collect_allocator_allocation,
-                args=(client, player, errors),
+                args=(
+                    client, player, errors, submitted, submitted_lock,
+                    all_submitted, len(active_players),
+                ),
             )
             thread.start()
             threads.append(thread)
@@ -1213,23 +1222,35 @@ class PokerTableSession:
         if errors:
             raise RuntimeError(errors[0])
 
+        for player in active_players:
+            client = self._client_by_name(player.name, seated_clients)
+            client.send({"type": "allocator_locked"})
+
         self._broadcast_hand_message(
             seated_clients,
             "All allocations submitted.",
         )
 
-    def _collect_allocator_allocation(self, client, player, errors):
+    def _collect_allocator_allocation(
+        self, client, player, errors, submitted, submitted_lock,
+        all_submitted, player_count,
+    ):
+        requested = False
         while True:
             try:
-                client.send(
-                    {
-                        "type": "request_allocator_allocation",
-                        "hand": [str(card) for card in player.hand],
-                        "top_board": [str(card) for card in self.game.top_board],
-                        "bottom_board": [str(card) for card in self.game.bottom_board],
-                    }
-                )
-                message = client.recv()
+                if not requested:
+                    client.send(
+                        {
+                            "type": "request_allocator_allocation",
+                            "hand": [str(card) for card in player.hand],
+                            "top_board": [str(card) for card in self.game.top_board],
+                            "bottom_board": [str(card) for card in self.game.bottom_board],
+                        }
+                    )
+                    requested = True
+                message = client.recv(stop_event=all_submitted)
+                if all_submitted.is_set() and message is None:
+                    return
                 if message and message.get("type") == "leave_table":
                     self._handle_leave_request(client)
                     continue
@@ -1250,13 +1271,18 @@ class PokerTableSession:
                     [player.hand[index - 1] for index in bottom_indexes],
                     [player.hand[index - 1] for index in hand_indexes],
                 )
+                with submitted_lock:
+                    submitted.add(player.name)
+                    if len(submitted) == player_count:
+                        all_submitted.set()
                 client.send(
                     {
                         "type": "message",
-                        "message": "Allocation submitted. Waiting for other players.",
+                        "message": "Allocation saved. You may update it while waiting.",
                     }
                 )
-                return
+                if all_submitted.is_set():
+                    return
 
             except (IndexError, TypeError, ValueError) as error:
                 client.send({"type": "error", "message": str(error)})

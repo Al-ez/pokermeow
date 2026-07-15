@@ -121,6 +121,32 @@ def test_controller_exposes_hand_history_and_cancel_leave():
     assert connection.sent[-1] == {"type": "cancel_leave"}
 
 
+def test_controller_exposes_allocator_lock_and_submits_updates():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+
+    controller.submit_allocator_allocation([1, 2], [3, 4], [5, 6])
+    controller.submit_allocator_allocation([2, 3], [1, 4], [5, 6])
+    connection.on_message({"type": "allocator_locked"})
+
+    assert connection.sent[-2:] == [
+        {
+            "type": "allocator_allocation",
+            "top": [1, 2],
+            "bottom": [3, 4],
+            "hand": [5, 6],
+        },
+        {
+            "type": "allocator_allocation",
+            "top": [2, 3],
+            "bottom": [1, 4],
+            "hand": [5, 6],
+        },
+    ]
+    assert ("allocator_locked", {"type": "allocator_locked"}) in events
+
+
 def test_controller_auto_continues_for_legacy_servers():
     _, connection = make_controller()
 

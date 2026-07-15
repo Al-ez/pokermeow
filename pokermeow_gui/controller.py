@@ -231,6 +231,8 @@ class ClientController:
             self._emit("hand_history", list(message.get("history", [])))
         elif message_type == "request_allocator_allocation":
             self._emit("allocator_required", dict(message))
+        elif message_type == "allocator_locked":
+            self._emit("allocator_locked", dict(message))
         elif message_type == "showdown":
             self._emit("showdown", dict(message))
         elif message_type == "request_continue":
