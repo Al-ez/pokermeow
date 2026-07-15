@@ -160,8 +160,12 @@ class ClientController:
                 "top": list(top),
                 "bottom": list(bottom),
                 "hand": list(hand),
+                "ready": True,
             }
         )
+
+    def cancel_allocator_ready(self):
+        self._send({"type": "allocator_ready", "ready": False})
 
     def _send(self, message):
         if self._connection is None:

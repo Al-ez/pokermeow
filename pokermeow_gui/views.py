@@ -1,7 +1,7 @@
 from html import escape
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QComboBox,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QGraphicsOpacityEffect,
     QPushButton,
     QSpinBox,
     QStackedWidget,
@@ -52,12 +53,32 @@ def compact_card_text(card):
     return f"{rank}{SUIT_SYMBOLS.get(suit.lower(), suit)}"
 
 
+def compact_card_html(card):
+    rank, suit = card_rank_suit(card)
+    suit_size = 27 if suit == "♣" else 22
+    return (
+        f'<span style="font-size:22px; font-weight:800;">{escape(str(rank))}</span>'
+        f'<span style="font-family:Segoe UI Symbol; font-size:{suit_size}px; '
+        f'font-weight:1000;">{escape(str(suit))}</span>'
+    )
+
+
 def stacked_card_text(card):
     card_text = str(card)
     rank, separator, suit = card_text.partition(" of ")
     if not separator:
         return card_text
     return f"{rank}\n{SUIT_SYMBOLS.get(suit.lower(), suit)}"
+
+
+def stacked_card_html(card):
+    rank, suit = card_rank_suit(card)
+    suit_size = 18 if suit == "♣" else 15
+    return (
+        f'<div style="font-size:10px; line-height:11px;">{escape(str(rank))}</div>'
+        f'<div style="font-family:Segoe UI Symbol; font-size:{suit_size}px; '
+        f'line-height:18px; font-weight:1000;">{escape(str(suit))}</div>'
+    )
 
 
 def card_rank_suit(card):
@@ -70,12 +91,18 @@ def card_rank_suit(card):
 
 def is_red_card(card):
     card_text = str(card).lower()
-    return (
-        card_text.endswith("hearts")
-        or card_text.endswith("diamonds")
-        or "\u2665" in card_text
-        or "\u2666" in card_text
-    )
+    return card_text.endswith("hearts") or "♥" in card_text
+
+
+def card_display_color(card, muted=False):
+    card_text = str(card).lower()
+    if card_text.endswith("hearts") or "♥" in card_text:
+        return "#991b1b" if muted else "#dc2626"
+    if card_text.endswith("diamonds") or "♦" in card_text:
+        return "#1e3a8a" if muted else "#2563eb"
+    if card_text.endswith("clubs") or "♣" in card_text:
+        return "#166534" if muted else "#15803d"
+    return "#334155" if muted else "#111827"
 
 
 def display_amount(value):
@@ -116,18 +143,25 @@ def card_cell_html(text, color="#f8fafc", offset=0):
     )
 
 
-def cards_html(cards):
+def cards_html(cards, spotlight=None):
     if not cards:
         return '<span style="color:#64748b;">—</span>'
     cells = []
+    spotlight = {str(card) for card in spotlight} if spotlight is not None else None
     for card in cards:
         rank, suit = card_rank_suit(card)
-        color = "#dc2626" if is_red_card(card) else "#111827"
+        highlighted = spotlight is None or str(card) in spotlight
+        color = card_display_color(card, muted=not highlighted)
+        background = "#fffbea" if spotlight is not None and highlighted else (
+            "#cbd5e1" if not highlighted else "#f8fafc"
+        )
+        border = "#fde047" if spotlight is not None and highlighted else "#94a3b8"
+        suit_size = 18 if suit == "♣" else 15
         cells.append(
             '<td style="'
-            "background:#f8fafc;"
+            f"background:{background};"
             f"color:{color};"
-            "border:1px solid #cbd5e1;"
+            f"border:2px solid {border};"
             "border-radius:7px;"
             "width:34px;"
             "height:44px;"
@@ -137,7 +171,8 @@ def cards_html(cards):
             "vertical-align:middle;"
             '">'
             f'<div style="font-size:13px; line-height:15px;">{escape(str(rank))}</div>'
-            f'<div style="font-size:15px; line-height:17px;">{escape(str(suit))}</div>'
+            f'<div style="font-family:Segoe UI Symbol; font-size:{suit_size}px; '
+            f'line-height:18px; font-weight:1000;">{escape(str(suit))}</div>'
             "</td>"
         )
     return (
@@ -184,12 +219,11 @@ class CardRow(QWidget):
             return
         for card in cards:
             full_text = str(card)
-            label = QLabel(compact_card_text(card))
+            label = QLabel(compact_card_html(card))
             label.setToolTip(full_text)
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             style = CARD_STYLE
-            if is_red_card(card):
-                style += "\nQLabel { color: #dc2626; }"
+            style += f"\nQLabel {{ color: {card_display_color(card)}; }}"
             label.setStyleSheet(style)
             self.row_layout.addWidget(label)
 
@@ -268,6 +302,7 @@ class CardFanWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.card_labels = []
+        self._animations = []
         self.setMinimumSize(118, self.CARD_H + 2)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent; border: none;")
@@ -276,13 +311,43 @@ class CardFanWidget(QWidget):
         self._set_card_texts(
             [
                 (
-                    stacked_card_text(card),
-                    "#dc2626" if is_red_card(card) else "#111827",
+                    stacked_card_html(card),
+                    card_display_color(card),
                     str(card),
                 )
                 for card in cards
             ]
         )
+
+    def spotlight(self, cards):
+        spotlight = {str(card) for card in cards}
+        self._animations = []
+        for label in self.card_labels:
+            highlighted = label.toolTip() in spotlight
+            color = card_display_color(label.toolTip())
+            label.setStyleSheet(
+                "QLabel {"
+                f"background: {'#fffbea' if highlighted else '#cbd5e1'};"
+                f"color: {color if highlighted else card_display_color(label.toolTip(), muted=True)};"
+                f"border: 2px solid {'#fde047' if highlighted else '#94a3b8'};"
+                "border-radius: 6px; padding: 3px 0 0 4px;"
+                "font-weight: 800; font-size: 10px;"
+                "}"
+            )
+            if highlighted:
+                effect = QGraphicsOpacityEffect(label)
+                label.setGraphicsEffect(effect)
+                animation = QPropertyAnimation(effect, b"opacity", self)
+                animation.setDuration(550)
+                animation.setStartValue(0.4)
+                animation.setEndValue(1.0)
+                animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+                animation.start()
+                self._animations.append(animation)
+            else:
+                # Muted colors create the shadow. Keeping the card opaque
+                # prevents overlapping cards from becoming brighter.
+                label.setGraphicsEffect(None)
 
     def set_card_backs(self, count):
         try:
@@ -306,6 +371,7 @@ class CardFanWidget(QWidget):
             label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
             self.card_labels.append(label)
         for label, (text, color, tooltip) in zip(self.card_labels, cards):
+            label.setGraphicsEffect(None)
             label.setText(text)
             label.setToolTip(tooltip)
             label.setStyleSheet(
@@ -374,8 +440,7 @@ class PokerActionSpot(QWidget):
         if not player:
             self.clear()
             return
-        self.dealer_label.setText("D")
-        self.dealer_label.setVisible(dealer)
+        self.dealer_label.setVisible(False)
         if player.get("all_in") and not player.get("folded"):
             hand_text = "All-in"
         else:
@@ -387,19 +452,9 @@ class PokerActionSpot(QWidget):
 
     def show_showdown(self, hand_info):
         self.cards_label.set_cards(hand_info.get("hand", []))
-        rankings = hand_info.get("rankings")
-        if rankings:
-            text = (
-                f"Top {rankings.get('top', '—')} / "
-                f"Bottom {rankings.get('bottom', '—')} / "
-                f"{rankings.get('hand_strength', '—')} / "
-                f"{rankings.get('total', '—')} pts"
-            )
-        else:
-            text = hand_info.get("hand_name", "Unknown hand")
-        self.hand_label.setText(text)
-        self.hand_label.setVisible(bool(text))
-        self.hand_label.setToolTip(text)
+        self.hand_label.setText("")
+        self.hand_label.setVisible(False)
+        self.hand_label.setToolTip("")
 
     def clear(self):
         self.dealer_label.setText("")
@@ -447,8 +502,24 @@ class PokerBetSpot(QLabel):
             parsed = Decimal(str(amount))
         except (InvalidOperation, TypeError, ValueError):
             parsed = Decimal(0)
+        self.setStyleSheet("background: transparent; border: none;")
         self.setText(display_amount(amount) if parsed > 0 else "")
         self.setVisible(parsed > 0)
+
+    def show_payout(self, amount):
+        try:
+            parsed = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError):
+            parsed = Decimal(0)
+        if parsed <= 0:
+            return
+        self.setText(f"+{display_amount(parsed)}")
+        self.setStyleSheet(
+            "background: #14532d; color: #bbf7d0;"
+            "border: 2px solid #4ade80; border-radius: 10px;"
+            "padding: 4px 10px; font-size: 16px; font-weight: 900;"
+        )
+        self.setVisible(True)
 
 
 class PokerTableDisplay(QWidget):
@@ -534,9 +605,11 @@ class PokerTableDisplay(QWidget):
         self.seat_widgets = {}
         self.action_widgets = {}
         self.bet_widgets = {}
+        self.dealer_widgets = {}
         self.player_seats = {}
         self.display_order = []
         self.pickable_seats = set()
+        self.community_cards = []
         self.setMinimumHeight(420 if show_game_details else 360)
 
         self.felt = QFrame()
@@ -552,8 +625,20 @@ class PokerTableDisplay(QWidget):
         self.board_label.setTextFormat(Qt.TextFormat.RichText)
         self.board_label.setObjectName("feltBoard")
         self.board_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.winning_hand_label = QLabel("")
+        self.winning_hand_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.winning_hand_label.setVisible(False)
+        self.winning_hand_label.setStyleSheet(
+            "background: #facc15; color: #422006;"
+            "border: 2px solid #fef08a; border-radius: 10px;"
+            "padding: 5px 14px; font-size: 16px; font-weight: 900;"
+        )
         felt_layout.addStretch()
         felt_layout.addWidget(self.pot_label)
+        felt_layout.addWidget(
+            self.winning_hand_label,
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
         felt_layout.addWidget(self.board_label)
         felt_layout.addStretch()
 
@@ -568,6 +653,15 @@ class PokerTableDisplay(QWidget):
             bet = PokerBetSpot(self)
             bet.setVisible(False)
             self.bet_widgets[seat_number] = bet
+            dealer_badge = QLabel("D", self)
+            dealer_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dealer_badge.setStyleSheet(
+                "background: #f8fafc; color: #111827;"
+                "border: 1px solid #111827; border-radius: 10px;"
+                "font-size: 11px; font-weight: 900; padding: 0;"
+            )
+            dealer_badge.setVisible(False)
+            self.dealer_widgets[seat_number] = dealer_badge
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -590,6 +684,7 @@ class PokerTableDisplay(QWidget):
         self.player_seats = {}
         self.pot_label.setText("Waiting for players")
         self.board_label.setText("")
+        self.winning_hand_label.setVisible(False)
         self._set_visible_seats(seats, username)
         for seat in seats:
             seat_number = int(seat.get("seat", 0))
@@ -599,6 +694,7 @@ class PokerTableDisplay(QWidget):
             widget.update_seat(seat)
             self.action_widgets[seat_number].clear()
             self.bet_widgets[seat_number].set_amount(0)
+            self.dealer_widgets[seat_number].setVisible(False)
             if seat.get("player"):
                 self.player_seats[seat["player"]] = seat_number
         self._layout_table()
@@ -621,8 +717,10 @@ class PokerTableDisplay(QWidget):
         dealer = state.get("dealer")
         self.player_seats = {}
         self.pot_label.setText(f"Pot: {state.get('pot', 0)}")
+        self.community_cards = list(state.get("board", []))
         self.board_label.setText(self._community_cards_html(state))
         self.board_label.setToolTip(self._community_cards_text(state))
+        self.winning_hand_label.setVisible(False)
         self._set_visible_seats(seats, username)
 
         for seat in seats:
@@ -644,6 +742,9 @@ class PokerTableDisplay(QWidget):
             self.bet_widgets[seat_number].set_amount(
                 player.get("current_bet", 0) if name else 0
             )
+            self.dealer_widgets[seat_number].setVisible(
+                bool(name and name == dealer)
+            )
             if name:
                 self.player_seats[name] = seat_number
         self._layout_table()
@@ -655,6 +756,25 @@ class PokerTableDisplay(QWidget):
             widget = self.action_widgets.get(seat_number)
             if widget is not None:
                 widget.show_showdown(hand_info)
+
+    def spotlight_showdown(self, cards, hand_name=""):
+        for widget in self.action_widgets.values():
+            widget.cards_label.spotlight(cards)
+        if self.community_cards:
+            self.board_label.setText(cards_html(self.community_cards, cards))
+        if hand_name:
+            self.winning_hand_label.setText(
+                str(hand_name).replace("_", " ").title()
+            )
+            self.winning_hand_label.setVisible(True)
+
+    def show_payouts(self, payouts):
+        for player, amount in payouts.items():
+            seat_number = self.player_seats.get(player)
+            widget = self.bet_widgets.get(seat_number)
+            if widget is not None:
+                widget.show_payout(amount)
+        self._layout_table()
 
     def _visible_seats(self, table):
         if not table:
@@ -690,6 +810,7 @@ class PokerTableDisplay(QWidget):
                 seat_number in visible and self.show_game_details
             )
             self.bet_widgets[seat_number].setVisible(False)
+            self.dealer_widgets[seat_number].setVisible(False)
 
     def _layout_table(self):
         width = max(self.width(), 1)
@@ -708,11 +829,10 @@ class PokerTableDisplay(QWidget):
         seat_h = max(40, min(58, int(seat_w * 0.44)))
         action_w = max(150, min(210, int(width * 0.21)))
         action_h = max(54, min(76, int(height * 0.13)))
-        bet_w = max(44, min(86, int(width * 0.08)))
-        bet_h = 26
+        bet_w = max(72, min(110, int(width * 0.10)))
+        bet_h = 28
         for seat_number, position_name in self.display_order:
             seat_x, seat_y = self.POSITIONS[position_name]
-            bet_x, bet_y = self.BET_POSITIONS[position_name]
             self._place_widget(
                 self.seat_widgets[seat_number],
                 seat_x,
@@ -730,12 +850,22 @@ class PokerTableDisplay(QWidget):
                 action_w,
                 action_h,
             )
+            bet_widget = self.bet_widgets[seat_number]
+            marker_w = max(bet_w, min(180, bet_widget.sizeHint().width() + 8))
+            marker_h = max(bet_h, min(40, bet_widget.sizeHint().height() + 4))
             self._place_widget(
-                self.bet_widgets[seat_number],
-                bet_x,
-                bet_y,
-                bet_w,
-                bet_h,
+                bet_widget,
+                self._toward_center(seat_x, 0.58),
+                self._toward_center(seat_y, 0.58),
+                marker_w,
+                marker_h,
+            )
+            self._place_widget(
+                self.dealer_widgets[seat_number],
+                self._toward_center(seat_x, 0.48),
+                self._toward_center(seat_y, 0.48),
+                22,
+                22,
             )
 
     def _place_widget(self, widget, x_ratio, y_ratio, width, height):
@@ -746,6 +876,10 @@ class PokerTableDisplay(QWidget):
         widget.setGeometry(x, y, width, height)
         widget.raise_()
         self.felt.lower()
+
+    @staticmethod
+    def _toward_center(value, fraction):
+        return value + (0.5 - value) * fraction
 
     def _community_cards_html(self, state):
         if "top_board" in state:
@@ -1140,6 +1274,12 @@ class TableView(QWidget):
 
     def show_showdown_hands(self, hands):
         self.table_display.show_showdown_hands(hands)
+
+    def spotlight_showdown(self, cards, hand_name=""):
+        self.table_display.spotlight_showdown(cards, hand_name)
+
+    def show_payouts(self, payouts):
+        self.table_display.show_payouts(payouts)
 
     def set_legal_actions(self, request):
         self._close_sizing()

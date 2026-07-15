@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .views import compact_card_text, is_red_card
+from .views import card_display_color, compact_card_html
 
 
 CARD_MIME = "application/x-pokermeow-card-index"
@@ -21,7 +21,7 @@ class AllocationCard(QLabel):
     clicked = Signal(int)
 
     def __init__(self, index, card, parent=None):
-        super().__init__(compact_card_text(card), parent)
+        super().__init__(compact_card_html(card), parent)
         self.index = index
         self.setToolTip(str(card))
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -30,7 +30,7 @@ class AllocationCard(QLabel):
         self.setStyleSheet(self._style(False))
 
     def _style(self, selected):
-        color = "#dc2626" if is_red_card(self.toolTip()) else "#111827"
+        color = card_display_color(self.toolTip())
         border = "3px solid #2563eb" if selected else "1px solid #94a3b8"
         return (
             f"background: white; color: {color}; border: {border}; "
@@ -72,8 +72,11 @@ class AllocationSlot(QLabel):
 
     def refresh(self, index, card):
         self.card_index = index
-        self.setText(compact_card_text(card) if card else "+")
-        color = "#dc2626" if card and is_red_card(card) else "#64748b"
+        self.setText(compact_card_html(card) if card else "+")
+        if card:
+            color = card_display_color(card)
+        else:
+            color = "#64748b"
         self.setStyleSheet(
             f"background: #f8fafc; color: {color}; border: 2px dashed #94a3b8; "
             "border-radius: 8px; font-size: 21px; font-weight: 700;"
@@ -96,6 +99,7 @@ class AllocationSlot(QLabel):
 
 class AllocatorDialog(QDialog):
     submitted = Signal(list, list, list)
+    ready_cancelled = Signal()
 
     BUCKETS = (
         ("top", "Top board"),
@@ -107,6 +111,7 @@ class AllocatorDialog(QDialog):
         super().__init__(parent)
         self.cards = list(cards)
         self.selected_index = None
+        self.is_ready = False
         self.assignments = {name: [None, None] for name, _ in self.BUCKETS}
         self.card_widgets = {}
         self.slots = {}
@@ -144,12 +149,12 @@ class AllocatorDialog(QDialog):
                 grid.addWidget(slot, row, position + 1)
         layout.addLayout(grid)
 
-        self.status = QLabel("Allocate all six cards, then confirm.")
+        self.status = QLabel("Allocate all six cards, then click Ready.")
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
         buttons.addStretch()
-        self.confirm_button = QPushButton("Confirm allocation")
-        self.confirm_button.clicked.connect(self.confirm)
+        self.confirm_button = QPushButton("Ready")
+        self.confirm_button.clicked.connect(self.toggle_ready)
         buttons.addWidget(self.confirm_button)
         layout.addLayout(buttons)
 
@@ -184,7 +189,15 @@ class AllocatorDialog(QDialog):
             widget.setVisible(index not in used)
             widget.set_selected(index == self.selected_index)
 
-    def confirm(self):
+    def toggle_ready(self):
+        if self.is_ready:
+            self.is_ready = False
+            self.ready_cancelled.emit()
+            self.confirm_button.setText("Ready")
+            self.status.setText("Ready cancelled. You can change your allocation.")
+            self._set_editor_enabled(True)
+            return
+
         buckets = [self.assignments[name] for name, _ in self.BUCKETS]
         flattened = [index for bucket in buckets for index in bucket]
         if any(index is None for index in flattened):
@@ -194,9 +207,17 @@ class AllocatorDialog(QDialog):
             QMessageBox.warning(self, "Invalid allocation", "Use every card exactly once.")
             return
         self.submitted.emit(*[list(bucket) for bucket in buckets])
-        self.confirm_button.setText("Update allocation")
-        self.status.setText("Submitted. You can keep changing it until all players finish.")
+        self.is_ready = True
+        self.confirm_button.setText("Cancel ready")
+        self.status.setText("Ready. Waiting for every other player to be ready.")
+        self._set_editor_enabled(False)
+
+    def _set_editor_enabled(self, enabled):
+        for widget in self.card_widgets.values():
+            widget.setEnabled(enabled)
+        for slot in self.slots.values():
+            slot.setEnabled(enabled)
 
     def lock(self):
-        self.status.setText("All players have submitted. Allocation locked.")
+        self.status.setText("All players are ready. Allocation locked.")
         self.accept()

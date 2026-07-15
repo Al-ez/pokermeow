@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from .controller import ClientController
 from .allocator_dialog import AllocatorDialog
-from .views import PokerStack, compact_card_text
+from .views import PokerStack
 
 
 class ControllerBridge(QObject):
@@ -37,6 +37,10 @@ class MainWindow(QMainWindow):
         self._leave_pending = False
         self._rebuy_dialog = None
         self._allocator_dialog = None
+        self._showdown_seconds = 0
+        self._showdown_timer = QTimer(self)
+        self._showdown_timer.setInterval(1000)
+        self._showdown_timer.timeout.connect(self._tick_showdown_timer)
         self.bridge.event_received.connect(self._handle_event)
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
@@ -125,6 +129,7 @@ class MainWindow(QMainWindow):
             self.pages.table.clear_legal_actions()
         elif event == "message":
             if payload == "New hand started.":
+                self._showdown_timer.stop()
                 self.pages.table.start_new_hand()
             else:
                 self.pages.table.append_history(payload)
@@ -286,46 +291,32 @@ class MainWindow(QMainWindow):
             self.controller.submit_rebuy()
 
     def _show_showdown(self, result):
-        winners = ", ".join(result.get("winners", [])) or "Unknown"
-        hand_names = result.get("winner_hand_names", {})
-        winner_details = ", ".join(
-            f"{name} ({hand_names.get(name, result.get('hand_name', ''))})"
-            for name in result.get("winners", [])
-        )
-        lines = ["", "SHOWDOWN"]
-        hands = result.get("hands", [])
-        self.pages.table.show_showdown_hands(hands)
-        if hands:
-            lines.append("Revealed hands:")
-            for hand_info in hands:
-                cards = " ".join(
-                    compact_card_text(card)
-                    for card in hand_info.get("hand", [])
-                )
-                rankings = hand_info.get("rankings")
-                if rankings:
-                    ranking = (
-                        f"Top: {rankings.get('top', '—')}; "
-                        f"Bottom: {rankings.get('bottom', '—')}; "
-                        f"Strength: {rankings.get('hand_strength', '—')}; "
-                        f"Total: {rankings.get('total', '—')} points"
-                    )
-                else:
-                    ranking = hand_info.get("hand_name", "Unknown hand")
-                lines.append(
-                    f"  {hand_info.get('player', 'Player')}: "
-                    f"{cards} \u2014 {ranking}"
-                )
-        else:
-            lines.append("Cards not revealed (hand won uncontested).")
+        self.pages.table.show_showdown_hands(result.get("hands", []))
+        self.pages.table.show_payouts(result.get("payouts", {}))
+        spotlight_cards = result.get("spotlight_cards")
+        if spotlight_cards:
+            hand_name = result.get("hand_name", "")
+            QTimer.singleShot(
+                650,
+                lambda cards=list(spotlight_cards), name=hand_name:
+                    self.pages.table.spotlight_showdown(cards, name),
+            )
+        self._showdown_seconds = max(0, int(result.get("display_seconds", 3)))
+        self._show_showdown_timer()
+        self._showdown_timer.start()
 
-        winner_label = "Winner" if len(result.get("winners", [])) == 1 else "Winners"
-        lines.append(f"{winner_label}: {winner_details or winners}")
-        for name, amount in result.get("amount_won", {}).items():
-            lines.append(f"Amount won by {name}: {amount}")
-        lines.append("Next hand starts in 3 seconds.")
-        self.pages.table.append_history("\n".join(lines))
-        self.statusBar().showMessage("Showdown — next hand in 3 seconds", 3000)
+    def _tick_showdown_timer(self):
+        self._showdown_seconds -= 1
+        if self._showdown_seconds <= 0:
+            self._showdown_timer.stop()
+            self.statusBar().clearMessage()
+            return
+        self._show_showdown_timer()
+
+    def _show_showdown_timer(self):
+        self.statusBar().showMessage(
+            f"Next hand in {self._showdown_seconds}s"
+        )
 
     def _request_allocation(self, payload):
         if self._allocator_dialog is not None:
@@ -340,5 +331,6 @@ class MainWindow(QMainWindow):
         )
         self._allocator_dialog = dialog
         dialog.submitted.connect(self.controller.submit_allocator_allocation)
+        dialog.ready_cancelled.connect(self.controller.cancel_allocator_ready)
         dialog.finished.connect(lambda _result: setattr(self, "_allocator_dialog", None))
         dialog.open()

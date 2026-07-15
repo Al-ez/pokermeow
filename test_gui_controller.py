@@ -136,12 +136,14 @@ def test_controller_exposes_allocator_lock_and_submits_updates():
             "top": [1, 2],
             "bottom": [3, 4],
             "hand": [5, 6],
+            "ready": True,
         },
         {
             "type": "allocator_allocation",
             "top": [2, 3],
             "bottom": [1, 4],
             "hand": [5, 6],
+            "ready": True,
         },
     ]
     assert ("allocator_locked", {"type": "allocator_locked"}) in events

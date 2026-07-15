@@ -62,13 +62,15 @@ class Client:
         self.connected = True
         self.leave_after_hand = False
         self.shutdown_event = shutdown_event or threading.Event()
+        self.send_lock = threading.Lock()
 
     def send(self, message):
         if not self.connected:
             raise ConnectionError("Client is disconnected")
 
         try:
-            send_json(self.file, message)
+            with self.send_lock:
+                send_json(self.file, message)
         except OSError as error:
             self.connected = False
             raise ConnectionError("Client is disconnected") from error
@@ -78,6 +80,8 @@ class Client:
             return None
 
         while not self.shutdown_event.is_set():
+            if stop_event is not None and stop_event.is_set():
+                return None
             try:
                 readable, _, _ = select.select(
                     [self.socket],
@@ -426,8 +430,6 @@ class PokerTableSession:
         print(f"Table has {self.table.max_seats} seats.")
 
         while not self.shutdown_event.is_set():
-            if stop_event is not None and stop_event.is_set():
-                return None
             self._activate_reserved_and_offer_waiting_list()
             self._poll_control_messages(
                 self.table.seated_clients(),
@@ -489,6 +491,18 @@ class PokerTableSession:
         status["table_id"] = self.table_id
         status["game"] = self.game_name
         return status
+
+    def _broadcast_table_status(self):
+        message = {"type": "table", "table": self._table_status()}
+        with self.all_clients_lock:
+            clients = list(self.all_clients)
+        for connected_client in clients:
+            if not connected_client.connected:
+                continue
+            try:
+                connected_client.send(message)
+            except ConnectionError:
+                connected_client.connected = False
 
     def _send_reconnect_snapshot(self, client):
         table_status = self._table_status()
@@ -681,6 +695,7 @@ class PokerTableSession:
                     ),
                 }
             )
+            self._broadcast_table_status()
             return
 
         seat_number = self._request_seat_choice(client)
@@ -723,6 +738,8 @@ class PokerTableSession:
                     "message": f"You are seated in seat {seat_number}.",
                 }
             )
+
+        self._broadcast_table_status()
 
     def _request_seat_choice(self, client):
         while True:
@@ -865,6 +882,7 @@ class PokerTableSession:
                 self._request_allocator_allocations(seated_clients)
 
             result = self.game.showdown()
+            showdown_scores = None
             if result.hand_name == "uncontested":
                 player_hand_names = {}
                 winner_hand_names = {
@@ -885,13 +903,16 @@ class PokerTableSession:
                 }
                 allocator_details = self._allocator_showdown_details()
             elif self.game_class is PotLimitOmahaGame and len(self.game.board) == 5:
-                player_hand_names = {
+                showdown_scores = {
                     player.name: self.game._best_plo_hand(
                         player.hand,
                         self.game.board,
-                    )[3]
+                    )
                     for player in self.game.players
                     if not player.folded
+                }
+                player_hand_names = {
+                    name: score[3] for name, score in showdown_scores.items()
                 }
                 winner_hand_names = {
                     winner: player_hand_names[winner]
@@ -899,10 +920,16 @@ class PokerTableSession:
                 }
                 allocator_details = None
             elif len(self.game.board) == 5:
-                player_hand_names = {
-                    player.name: HandEvaluator.best_hand(player.hand + self.game.board)[3]
+                showdown_scores = {
+                    # Board-first ordering makes a true board-playing chop
+                    # spotlight the shared five cards instead of an equivalent
+                    # private card with the same rank.
+                    player.name: HandEvaluator.best_hand(self.game.board + player.hand)
                     for player in self.game.players
                     if not player.folded
+                }
+                player_hand_names = {
+                    name: score[3] for name, score in showdown_scores.items()
                 }
                 winner_hand_names = {
                     winner: player_hand_names[winner]
@@ -954,6 +981,13 @@ class PokerTableSession:
                 revealed_hands,
             )
             self._send_states_to(seated_clients)
+            showdown_delay = self._showdown_display_seconds(result)
+            spotlight_cards = None
+            if (
+                result.hand_name != "uncontested"
+                and self.game_class in {NoLimitHoldemGame, PotLimitOmahaGame}
+            ):
+                spotlight_cards = self._spotlight_cards_for_scores(showdown_scores)
             self._broadcast_to(
                 seated_clients,
                 {
@@ -975,11 +1009,14 @@ class PokerTableSession:
                     ),
                     "allocator_details": allocator_details,
                     "amount_won": amount_won,
+                    "payouts": dict(result.amount_won),
                     "hands": revealed_hands,
+                    "display_seconds": showdown_delay,
+                    "spotlight_cards": spotlight_cards,
                 },
             )
 
-            self._wait_for_showdown_display(seated_clients)
+            self._wait_for_showdown_display(seated_clients, showdown_delay)
             busted_clients = self.table.update_stacks(self.game)
             leaving_clients = self._remove_scheduled_leavers()
             busted_clients = [
@@ -1199,9 +1236,9 @@ class PokerTableSession:
 
         errors = []
         threads = []
-        submitted = set()
-        submitted_lock = threading.Lock()
-        all_submitted = threading.Event()
+        ready_players = set()
+        ready_condition = threading.Condition()
+        allocations_locked = threading.Event()
         active_players = list(self.game.active_players())
 
         for player in active_players:
@@ -1209,12 +1246,27 @@ class PokerTableSession:
             thread = threading.Thread(
                 target=self._collect_allocator_allocation,
                 args=(
-                    client, player, errors, submitted, submitted_lock,
-                    all_submitted, len(active_players),
+                    client, player, errors, ready_players, ready_condition,
+                    allocations_locked,
                 ),
             )
             thread.start()
             threads.append(thread)
+
+        # Require the whole table to remain ready briefly. This lets an
+        # already-sent Cancel ready reach the server before allocations lock.
+        with ready_condition:
+            while not errors:
+                while len(ready_players) < len(active_players) and not errors:
+                    ready_condition.wait()
+                if errors:
+                    break
+                changed = ready_condition.wait(timeout=0.5)
+                if not changed and len(ready_players) == len(active_players):
+                    allocations_locked.set()
+                    break
+            if errors:
+                allocations_locked.set()
 
         for thread in threads:
             thread.join()
@@ -1232,8 +1284,8 @@ class PokerTableSession:
         )
 
     def _collect_allocator_allocation(
-        self, client, player, errors, submitted, submitted_lock,
-        all_submitted, player_count,
+        self, client, player, errors, ready_players, ready_condition,
+        allocations_locked,
     ):
         requested = False
         while True:
@@ -1248,8 +1300,8 @@ class PokerTableSession:
                         }
                     )
                     requested = True
-                message = client.recv(stop_event=all_submitted)
-                if all_submitted.is_set() and message is None:
+                message = client.recv(stop_event=allocations_locked)
+                if allocations_locked.is_set() and message is None:
                     return
                 if message and message.get("type") == "leave_table":
                     self._handle_leave_request(client)
@@ -1257,8 +1309,28 @@ class PokerTableSession:
                 if message and message.get("type") == "cancel_leave":
                     self._handle_cancel_leave_request(client)
                     continue
-                if not message or message.get("type") != "allocator_allocation":
-                    errors.append(f"{player.name} disconnected during allocation")
+                if not message:
+                    with ready_condition:
+                        errors.append(f"{player.name} disconnected during allocation")
+                        ready_condition.notify_all()
+                    return
+
+                if message.get("type") == "allocator_ready":
+                    if message.get("ready") is not False:
+                        client.send({"type": "error", "message": "Invalid ready state"})
+                        continue
+                    with ready_condition:
+                        ready_players.discard(player.name)
+                        ready_condition.notify_all()
+                    client.send(
+                        {"type": "message", "message": "Ready cancelled."}
+                    )
+                    continue
+
+                if message.get("type") != "allocator_allocation":
+                    with ready_condition:
+                        errors.append(f"{player.name} sent an invalid allocation response")
+                        ready_condition.notify_all()
                     return
 
                 top_indexes = self._parse_card_indexes(message.get("top"))
@@ -1271,18 +1343,15 @@ class PokerTableSession:
                     [player.hand[index - 1] for index in bottom_indexes],
                     [player.hand[index - 1] for index in hand_indexes],
                 )
-                with submitted_lock:
-                    submitted.add(player.name)
-                    if len(submitted) == player_count:
-                        all_submitted.set()
+                with ready_condition:
+                    ready_players.add(player.name)
+                    ready_condition.notify_all()
                 client.send(
                     {
                         "type": "message",
-                        "message": "Allocation saved. You may update it while waiting.",
+                        "message": "Ready. Waiting for all players.",
                     }
                 )
-                if all_submitted.is_set():
-                    return
 
             except (IndexError, TypeError, ValueError) as error:
                 client.send({"type": "error", "message": str(error)})
@@ -1613,8 +1682,9 @@ class PokerTableSession:
         except ConnectionError:
             client.connected = False
 
-    def _wait_for_showdown_display(self, clients):
-        deadline = time.monotonic() + TIMEOUTS["showdown_display"]
+    def _wait_for_showdown_display(self, clients, duration=None):
+        duration = TIMEOUTS["showdown_display"] if duration is None else duration
+        deadline = time.monotonic() + duration
         while not self.shutdown_event.is_set():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1623,6 +1693,28 @@ class PokerTableSession:
                 clients,
                 timeout=min(remaining, 0.25),
             )
+
+    def _showdown_display_seconds(self, result):
+        if result.hand_name == "uncontested":
+            return 2
+        if self.game_class is AllocatorGame:
+            return 15
+        return TIMEOUTS["showdown_display"]
+
+    @staticmethod
+    def _spotlight_cards_for_scores(scores):
+        if not scores:
+            return None
+        strongest = max(score[:2] for score in scores.values())
+        cards = []
+        for score in scores.values():
+            if score[:2] != strongest:
+                continue
+            for card in score[2]:
+                card_text = str(card)
+                if card_text not in cards:
+                    cards.append(card_text)
+        return cards
 
     def _remove_scheduled_leavers(self):
         leaving_clients = [
