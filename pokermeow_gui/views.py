@@ -776,6 +776,59 @@ class PokerTableDisplay(QWidget):
                 widget.show_payout(amount)
         self._layout_table()
 
+    def show_allocator_stage(self, stage, title, is_strength=False):
+        players = stage.get("players", {})
+        for player, seat_number in self.player_seats.items():
+            widget = self.action_widgets.get(seat_number)
+            if widget is None:
+                continue
+            player_detail = players.get(player)
+            if player_detail:
+                widget.show_showdown(
+                    {"hand": list(player_detail.get("cards", []))}
+                )
+            else:
+                widget.cards_label.clear()
+        self.winning_hand_label.setVisible(False)
+        if is_strength:
+            self.community_cards = []
+            self.board_label.setText("")
+            self.board_label.setToolTip("")
+        else:
+            self.community_cards = list(stage.get("board", []))
+            self.board_label.setText(cards_html(self.community_cards))
+            self.board_label.setToolTip(cards_text(self.community_cards))
+
+    def spotlight_allocator_stage(self, stage, title, is_strength=False):
+        players = stage.get("players", {})
+        winner_names = [
+            winner.get("player") for winner in stage.get("winners", [])
+        ]
+        spotlight_cards = []
+        for winner_name in winner_names:
+            winner = players.get(winner_name, {})
+            selected = (
+                winner.get("cards", [])
+                if is_strength
+                else winner.get("best_five", [])
+            )
+            for card in selected:
+                if card not in spotlight_cards:
+                    spotlight_cards.append(card)
+        for widget in self.action_widgets.values():
+            widget.cards_label.spotlight(spotlight_cards)
+        if self.community_cards:
+            self.board_label.setText(
+                cards_html(self.community_cards, spotlight_cards)
+            )
+        first_winner = players.get(winner_names[0], {}) if winner_names else {}
+        hand_label = first_winner.get("label" if is_strength else "hand_name", "")
+        banner = title
+        if hand_label:
+            banner += " · " + str(hand_label).replace("_", " ").title()
+        self.winning_hand_label.setText(banner)
+        self.winning_hand_label.setVisible(True)
+
     def _visible_seats(self, table):
         if not table:
             return []
@@ -1280,6 +1333,14 @@ class TableView(QWidget):
 
     def show_payouts(self, payouts):
         self.table_display.show_payouts(payouts)
+
+    def show_allocator_stage(self, stage, title, is_strength=False):
+        self.table_display.show_allocator_stage(stage, title, is_strength)
+
+    def spotlight_allocator_stage(self, stage, title, is_strength=False):
+        self.table_display.spotlight_allocator_stage(
+            stage, title, is_strength
+        )
 
     def set_legal_actions(self, request):
         self._close_sizing()

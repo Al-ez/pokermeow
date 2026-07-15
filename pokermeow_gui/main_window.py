@@ -291,19 +291,50 @@ class MainWindow(QMainWindow):
             self.controller.submit_rebuy()
 
     def _show_showdown(self, result):
-        self.pages.table.show_showdown_hands(result.get("hands", []))
-        self.pages.table.show_payouts(result.get("payouts", {}))
-        spotlight_cards = result.get("spotlight_cards")
-        if spotlight_cards:
-            hand_name = result.get("hand_name", "")
-            QTimer.singleShot(
-                650,
-                lambda cards=list(spotlight_cards), name=hand_name:
-                    self.pages.table.spotlight_showdown(cards, name),
+        allocator_details = result.get("allocator_details")
+        if allocator_details:
+            self._show_allocator_showdown(
+                allocator_details,
+                result.get("payouts", {}),
             )
+        else:
+            self.pages.table.show_showdown_hands(result.get("hands", []))
+            self.pages.table.show_payouts(result.get("payouts", {}))
+            spotlight_cards = result.get("spotlight_cards")
+            if spotlight_cards:
+                hand_name = result.get("hand_name", "")
+                QTimer.singleShot(
+                    650,
+                    lambda cards=list(spotlight_cards), name=hand_name:
+                        self.pages.table.spotlight_showdown(cards, name),
+                )
         self._showdown_seconds = max(0, int(result.get("display_seconds", 3)))
         self._show_showdown_timer()
         self._showdown_timer.start()
+
+    def _show_allocator_showdown(self, details, payouts):
+        stages = (
+            (0, "Top Board", details.get("top", {}), False),
+            (5000, "Bottom Board", details.get("bottom", {}), False),
+            (10000, "Hand Strength", details.get("hand_strength", {}), True),
+        )
+        for delay, title, stage, is_strength in stages:
+            QTimer.singleShot(
+                delay,
+                lambda data=stage, name=title, strength=is_strength:
+                    self.pages.table.show_allocator_stage(data, name, strength),
+            )
+            QTimer.singleShot(
+                delay + 650,
+                lambda data=stage, name=title, strength=is_strength:
+                    self.pages.table.spotlight_allocator_stage(
+                        data, name, strength
+                    ),
+            )
+        QTimer.singleShot(
+            10650,
+            lambda awards=dict(payouts): self.pages.table.show_payouts(awards),
+        )
 
     def _tick_showdown_timer(self):
         self._showdown_seconds -= 1

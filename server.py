@@ -1440,6 +1440,7 @@ class PokerTableSession:
                 "cards": [str(card) for card in allocated_cards],
                 "hand_name": score[3],
                 "score": score[:2],
+                "best_five": [str(card) for card in score[2]],
             }
 
         best_score = max(result["score"] for result in player_results.values())
@@ -1456,6 +1457,7 @@ class PokerTableSession:
                 player_name: {
                     "cards": result["cards"],
                     "hand_name": result["hand_name"],
+                    "best_five": result["best_five"],
                 }
                 for player_name, result in player_results.items()
             },
