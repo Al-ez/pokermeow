@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .views import card_display_color, compact_card_html
+from .views import card_display_color, compact_card_html, compact_card_text
 
 
 CARD_MIME = "application/x-pokermeow-card-index"
