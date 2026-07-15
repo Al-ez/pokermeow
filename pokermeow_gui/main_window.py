@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller=None):
         super().__init__()
         self.setWindowTitle("PokerMeow")
-        self.resize(1180, 760)
+        self.setFixedSize(1180, 720)
         self.controller = controller or ClientController()
         self.pages = PokerStack()
         self.setCentralWidget(self.pages)
@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
 
         self.pages.menu.connect_requested.connect(self._connect)
         self.pages.lobby.leave_requested.connect(self._request_leave)
+        self.pages.lobby.seat_selected.connect(self._select_seat)
         self.pages.table.leave_requested.connect(self._request_leave)
         self.pages.table.action_requested.connect(self._submit_action)
         self.statusBar().showMessage("Ready")
@@ -103,7 +104,7 @@ class MainWindow(QMainWindow):
                 f"Joined as {payload.get('name', self.controller.username)}."
             )
         elif event == "table":
-            self.pages.lobby.update_table(payload)
+            self.pages.lobby.update_table(payload, self.controller.username)
             self.pages.table.set_table_context(payload.get("table_id"))
         elif event == "lobby_status":
             self.pages.lobby.set_status(payload.get("message", "Waiting…"))
@@ -113,7 +114,7 @@ class MainWindow(QMainWindow):
             state = payload.get("state", {})
             table = payload.get("table")
             self.pages.table.update_state(state, table, self.controller.username)
-            self.pages.lobby.update_table(table)
+            self.pages.lobby.update_table(table, self.controller.username)
             self.pages.setCurrentWidget(self.pages.table)
         elif event == "action_required":
             self.pages.setCurrentWidget(self.pages.table)
@@ -191,19 +192,16 @@ class MainWindow(QMainWindow):
             self.pages.setCurrentWidget(self.pages.menu)
 
     def _choose_seat(self, payload):
-        seats = [str(seat) for seat in payload.get("available_seats", [])]
+        seats = payload.get("available_seats", [])
         if not seats:
             return
-        selected, accepted = QInputDialog.getItem(
-            self,
-            "Choose a seat",
-            "Available seat:",
-            seats,
-            0,
-            False,
-        )
-        if accepted:
-            self.controller.choose_seat(int(selected))
+        self.pages.lobby.request_seat_selection(payload.get("table"), seats)
+        self.pages.setCurrentWidget(self.pages.lobby)
+
+    def _select_seat(self, seat_number):
+        self.pages.lobby.clear_seat_selection()
+        self.pages.lobby.set_status(f"Taking seat…")
+        self.controller.choose_seat(int(seat_number))
 
     def _request_new_name(self, message):
         name, accepted = QInputDialog.getText(

@@ -1,3 +1,4 @@
+from html import escape
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from PySide6.QtCore import Qt, Signal
@@ -6,18 +7,16 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
     QStackedWidget,
     QTextEdit,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -53,6 +52,22 @@ def compact_card_text(card):
     return f"{rank}{SUIT_SYMBOLS.get(suit.lower(), suit)}"
 
 
+def stacked_card_text(card):
+    card_text = str(card)
+    rank, separator, suit = card_text.partition(" of ")
+    if not separator:
+        return card_text
+    return f"{rank}\n{SUIT_SYMBOLS.get(suit.lower(), suit)}"
+
+
+def card_rank_suit(card):
+    card_text = str(card)
+    rank, separator, suit = card_text.partition(" of ")
+    if not separator:
+        return card_text, ""
+    return rank, SUIT_SYMBOLS.get(suit.lower(), suit)
+
+
 def is_red_card(card):
     card_text = str(card).lower()
     return (
@@ -71,6 +86,81 @@ def display_amount(value):
     except (InvalidOperation, TypeError, ValueError):
         pass
     return str(value)
+
+
+def cards_text(cards):
+    return " ".join(compact_card_text(card) for card in cards) if cards else "—"
+
+
+def card_cell_html(text, color="#f8fafc", offset=0):
+    margin = 0 if offset == 0 else -12
+    content = escape(str(text)).replace("\n", "<br>")
+    return (
+        '<span style="'
+        "display:inline-block;"
+        "background:#f8fafc;"
+        f"color:{color};"
+        "border:1px solid #cbd5e1;"
+        "border-radius:6px;"
+        "width:34px;"
+        "height:42px;"
+        "padding:3px 0 0 4px;"
+        f"margin-left:{margin}px;"
+        "font-weight:800;"
+        "font-size:10px;"
+        "line-height:10px;"
+        "text-align:left;"
+        "vertical-align:top;"
+        '">'
+        f"{content}</span>"
+    )
+
+
+def cards_html(cards):
+    if not cards:
+        return '<span style="color:#64748b;">—</span>'
+    cells = []
+    for card in cards:
+        rank, suit = card_rank_suit(card)
+        color = "#dc2626" if is_red_card(card) else "#111827"
+        cells.append(
+            '<td style="'
+            "background:#f8fafc;"
+            f"color:{color};"
+            "border:1px solid #cbd5e1;"
+            "border-radius:7px;"
+            "width:34px;"
+            "height:44px;"
+            "padding:3px 4px;"
+            "font-weight:900;"
+            "text-align:center;"
+            "vertical-align:middle;"
+            '">'
+            f'<div style="font-size:13px; line-height:15px;">{escape(str(rank))}</div>'
+            f'<div style="font-size:15px; line-height:17px;">{escape(str(suit))}</div>'
+            "</td>"
+        )
+    return (
+        '<table align="center" cellspacing="3" cellpadding="0"><tr>'
+        + "".join(cells)
+        + "</tr></table>"
+    )
+
+
+def card_backs_html(count):
+    try:
+        total = max(0, int(count))
+    except (TypeError, ValueError):
+        total = 0
+    cells = [
+        card_cell_html("\U0001F0A0", color="#bfdbfe", offset=index)
+        for index in range(total)
+    ]
+    return (
+        '<div align="center" style="white-space:nowrap;">'
+        + "".join(cells)
+        + "</div>"
+    )
 
 
 class CardRow(QWidget):
@@ -102,6 +192,577 @@ class CardRow(QWidget):
                 style += "\nQLabel { color: #dc2626; }"
             label.setStyleSheet(style)
             self.row_layout.addWidget(label)
+
+
+class PokerSeatWidget(QFrame):
+    clicked = Signal(int)
+
+    def __init__(self, seat_number, show_game_details=False, parent=None):
+        super().__init__(parent)
+        self.seat_number = seat_number
+        self.show_game_details = show_game_details
+        self.setObjectName("pokerSeat")
+        self.setMinimumSize(72, 40)
+        self.setMaximumSize(176, 62)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(0)
+
+        self.player_label = QLabel("Open")
+        self.player_label.setObjectName("seatPlayer")
+        self.player_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.player_label)
+
+        self.stack_label = QLabel("")
+        self.stack_label.setObjectName("seatStack")
+        self.stack_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.stack_label.setWordWrap(True)
+        layout.addWidget(self.stack_label)
+        self.player_label.setStyleSheet("background: transparent; border: none;")
+        self.stack_label.setStyleSheet("background: transparent; border: none;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.seat_number)
+        super().mousePressEvent(event)
+
+    def set_pickable(self, pickable):
+        self.setProperty("pickable", bool(pickable))
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def update_seat(self, seat, player=None, username="", dealer=None):
+        status = seat.get("status", "open")
+        name = seat.get("player")
+        occupied = bool(name)
+        self.setProperty("occupied", occupied)
+        self.setProperty("hero", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        self.player_label.setText(name or self._empty_label(status))
+        self.player_label.setToolTip(name or "")
+        self.stack_label.setText(self._stack_text(seat, player))
+
+    def _empty_label(self, status):
+        return {
+            "open": "Open",
+            "closed": "Closed",
+            "reserved": "Next hand",
+        }.get(status, status.title())
+
+    def _stack_text(self, seat, player):
+        stack = player.get("stack") if player else seat.get("stack")
+        if stack is None:
+            return ""
+        return display_amount(stack)
+
+
+class CardFanWidget(QWidget):
+    CARD_W = 34
+    CARD_H = 42
+    STEP = 22
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.card_labels = []
+        self.setMinimumSize(118, self.CARD_H + 2)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def set_cards(self, cards):
+        self._set_card_texts(
+            [
+                (
+                    stacked_card_text(card),
+                    "#dc2626" if is_red_card(card) else "#111827",
+                    str(card),
+                )
+                for card in cards
+            ]
+        )
+
+    def set_card_backs(self, count):
+        try:
+            total = max(0, int(count))
+        except (TypeError, ValueError):
+            total = 0
+        self._set_card_texts([("\U0001F0A0", "#bfdbfe", "") for _ in range(total)])
+
+    def clear(self):
+        self._set_card_texts([])
+
+    def _set_card_texts(self, cards):
+        while len(self.card_labels) > len(cards):
+            label = self.card_labels.pop()
+            label.deleteLater()
+        while len(self.card_labels) < len(cards):
+            label = QLabel(self)
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+            )
+            label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            self.card_labels.append(label)
+        for label, (text, color, tooltip) in zip(self.card_labels, cards):
+            label.setText(text)
+            label.setToolTip(tooltip)
+            label.setStyleSheet(
+                "QLabel {"
+                "background: #f8fafc;"
+                f"color: {color};"
+                "border: 1px solid #cbd5e1;"
+                "border-radius: 6px;"
+                "padding: 3px 0 0 4px;"
+                "font-weight: 800;"
+                "font-size: 10px;"
+                "}"
+            )
+            label.show()
+        self.setVisible(bool(cards))
+        self._layout_cards()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_cards()
+
+    def _layout_cards(self):
+        total = len(self.card_labels)
+        if not total:
+            return
+        fan_w = self.CARD_W + self.STEP * (total - 1)
+        start_x = max(0, int((self.width() - fan_w) / 2))
+        start_y = max(0, int((self.height() - self.CARD_H) / 2))
+        for index, label in enumerate(self.card_labels):
+            label.setGeometry(
+                start_x + self.STEP * index,
+                start_y,
+                self.CARD_W,
+                self.CARD_H,
+            )
+            label.raise_()
+
+
+class PokerActionSpot(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("tableAction")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+        self.setMinimumSize(126, 54)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(2, 0, 2, 0)
+        layout.setSpacing(0)
+        layout.addStretch(1)
+        self.dealer_label = QLabel("")
+        self.dealer_label.setObjectName("dealerButton")
+        self.dealer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.dealer_label.setVisible(False)
+        self.cards_label = CardFanWidget()
+        self.hand_label = QLabel("")
+        self.hand_label.setObjectName("seatHand")
+        self.hand_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hand_label.setWordWrap(True)
+        self.hand_label.setStyleSheet("background: transparent; border: none;")
+        self.hand_label.setVisible(False)
+        layout.addWidget(self.dealer_label)
+        layout.addWidget(self.cards_label)
+        layout.addWidget(self.hand_label)
+
+    def update_action(self, player=None, dealer=False, is_hero=False):
+        if not player:
+            self.clear()
+            return
+        self.dealer_label.setText("D")
+        self.dealer_label.setVisible(dealer)
+        if player.get("all_in") and not player.get("folded"):
+            hand_text = "All-in"
+        else:
+            hand_text = ""
+        self.hand_label.setText(hand_text)
+        self.hand_label.setVisible(bool(hand_text))
+        self._update_cards(player, is_hero=is_hero)
+        self.hand_label.setToolTip("")
+
+    def show_showdown(self, hand_info):
+        self.cards_label.set_cards(hand_info.get("hand", []))
+        rankings = hand_info.get("rankings")
+        if rankings:
+            text = (
+                f"Top {rankings.get('top', '—')} / "
+                f"Bottom {rankings.get('bottom', '—')} / "
+                f"{rankings.get('hand_strength', '—')} / "
+                f"{rankings.get('total', '—')} pts"
+            )
+        else:
+            text = hand_info.get("hand_name", "Unknown hand")
+        self.hand_label.setText(text)
+        self.hand_label.setVisible(bool(text))
+        self.hand_label.setToolTip(text)
+
+    def clear(self):
+        self.dealer_label.setText("")
+        self.dealer_label.setVisible(False)
+        self.cards_label.clear()
+        self.hand_label.setText("")
+        self.hand_label.setVisible(False)
+        self.hand_label.setToolTip("")
+
+    def _update_cards(self, player, is_hero=False):
+        if player.get("folded") and not is_hero:
+            self.cards_label.clear()
+            return
+        if player.get("hand"):
+            self.cards_label.set_cards(player.get("hand", []))
+            return
+        hand_size = player.get("hand_size")
+        if hand_size:
+            self.cards_label.set_card_backs(hand_size)
+            return
+        self.cards_label.clear()
+
+    @staticmethod
+    def _decimal(value):
+        try:
+            amount = Decimal(str(value))
+            if amount.is_finite():
+                return amount
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+        return Decimal(0)
+
+
+class PokerBetSpot(QLabel):
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self.setObjectName("tableActionTop")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
+        self.setMinimumSize(48, 24)
+
+    def set_amount(self, amount):
+        try:
+            parsed = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError):
+            parsed = Decimal(0)
+        self.setText(display_amount(amount) if parsed > 0 else "")
+        self.setVisible(parsed > 0)
+
+
+class PokerTableDisplay(QWidget):
+    seat_clicked = Signal(int)
+
+    POSITIONS = {
+        "bottom": (0.50, 0.94),
+        "bottom_left": (0.27, 0.90),
+        "left_bottom": (0.06, 0.66),
+        "left_top": (0.06, 0.26),
+        "top_left": (0.27, 0.21),
+        "top": (0.50, 0.21),
+        "top_right": (0.73, 0.21),
+        "right_top": (0.94, 0.26),
+        "right_bottom": (0.94, 0.66),
+        "bottom_right": (0.73, 0.90),
+    }
+    BET_POSITIONS = {
+        "bottom": (0.50, 0.70),
+        "bottom_left": (0.35, 0.68),
+        "left_bottom": (0.24, 0.58),
+        "left_top": (0.24, 0.36),
+        "top_left": (0.35, 0.26),
+        "top": (0.50, 0.23),
+        "top_right": (0.65, 0.26),
+        "right_top": (0.76, 0.36),
+        "right_bottom": (0.76, 0.58),
+        "bottom_right": (0.65, 0.68),
+    }
+    POSITION_ORDER = {
+        2: ["bottom", "top"],
+        3: ["bottom", "left_top", "right_top"],
+        4: ["bottom", "left_top", "top", "right_top"],
+        5: ["bottom", "left_bottom", "left_top", "top", "right_top"],
+        6: ["bottom", "bottom_left", "left_top", "top", "right_top", "bottom_right"],
+        7: [
+            "bottom",
+            "bottom_left",
+            "left_top",
+            "top_left",
+            "top_right",
+            "right_top",
+            "bottom_right",
+        ],
+        8: [
+            "bottom",
+            "bottom_left",
+            "left_bottom",
+            "left_top",
+            "top",
+            "right_top",
+            "right_bottom",
+            "bottom_right",
+        ],
+        9: [
+            "bottom",
+            "bottom_left",
+            "left_bottom",
+            "left_top",
+            "top_left",
+            "top_right",
+            "right_top",
+            "right_bottom",
+            "bottom_right",
+        ],
+        10: [
+            "bottom",
+            "bottom_left",
+            "left_bottom",
+            "left_top",
+            "top_left",
+            "top",
+            "top_right",
+            "right_top",
+            "right_bottom",
+            "bottom_right",
+        ],
+    }
+
+    def __init__(self, show_game_details=False, parent=None):
+        super().__init__(parent)
+        self.show_game_details = show_game_details
+        self.seat_widgets = {}
+        self.action_widgets = {}
+        self.bet_widgets = {}
+        self.player_seats = {}
+        self.display_order = []
+        self.pickable_seats = set()
+        self.setMinimumHeight(420 if show_game_details else 360)
+
+        self.felt = QFrame()
+        self.felt.setObjectName("pokerFelt")
+        self.felt.setParent(self)
+        felt_layout = QVBoxLayout(self.felt)
+        felt_layout.setContentsMargins(24, 20, 24, 20)
+        felt_layout.setSpacing(8)
+        self.pot_label = QLabel("Pot: 0")
+        self.pot_label.setObjectName("feltPot")
+        self.pot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.board_label = QLabel(cards_html([]))
+        self.board_label.setTextFormat(Qt.TextFormat.RichText)
+        self.board_label.setObjectName("feltBoard")
+        self.board_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        felt_layout.addStretch()
+        felt_layout.addWidget(self.pot_label)
+        felt_layout.addWidget(self.board_label)
+        felt_layout.addStretch()
+
+        for seat_number in range(1, 11):
+            widget = PokerSeatWidget(seat_number, show_game_details, self)
+            widget.clicked.connect(self._seat_clicked)
+            widget.setVisible(False)
+            self.seat_widgets[seat_number] = widget
+            action = PokerActionSpot(self)
+            action.setVisible(False)
+            self.action_widgets[seat_number] = action
+            bet = PokerBetSpot(self)
+            bet.setVisible(False)
+            self.bet_widgets[seat_number] = bet
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_table()
+
+    def set_pickable_seats(self, seats):
+        self.pickable_seats = {int(seat) for seat in seats}
+        for seat_number, widget in self.seat_widgets.items():
+            widget.set_pickable(seat_number in self.pickable_seats)
+
+    def clear_pickable_seats(self):
+        self.set_pickable_seats([])
+
+    def _seat_clicked(self, seat_number):
+        if not self.pickable_seats or seat_number in self.pickable_seats:
+            self.seat_clicked.emit(seat_number)
+
+    def update_lobby(self, table, username=""):
+        seats = self._visible_seats(table)
+        self.player_seats = {}
+        self.pot_label.setText("Waiting for players")
+        self.board_label.setText("")
+        self._set_visible_seats(seats, username)
+        for seat in seats:
+            seat_number = int(seat.get("seat", 0))
+            widget = self.seat_widgets.get(seat_number)
+            if widget is None:
+                continue
+            widget.update_seat(seat)
+            self.action_widgets[seat_number].clear()
+            self.bet_widgets[seat_number].set_amount(0)
+            if seat.get("player"):
+                self.player_seats[seat["player"]] = seat_number
+        self._layout_table()
+
+    def update_game(self, state, table, username):
+        seats = self._visible_seats(table)
+        if not seats:
+            seats = [
+                {
+                    "seat": index + 1,
+                    "status": "seated",
+                    "player": name,
+                    "stack": player.get("stack", 0),
+                }
+                for index, (name, player) in enumerate(
+                    state.get("players", {}).items()
+                )
+            ]
+        players = state.get("players", {})
+        dealer = state.get("dealer")
+        self.player_seats = {}
+        self.pot_label.setText(f"Pot: {state.get('pot', 0)}")
+        self.board_label.setText(self._community_cards_html(state))
+        self.board_label.setToolTip(self._community_cards_text(state))
+        self._set_visible_seats(seats, username)
+
+        for seat in seats:
+            seat_number = int(seat.get("seat", 0))
+            widget = self.seat_widgets.get(seat_number)
+            if widget is None:
+                continue
+            name = seat.get("player")
+            player = players.get(name, {}) if name else {}
+            widget.update_seat(seat, player, username, dealer)
+            self.action_widgets[seat_number].setVisible(
+                bool(name) and self.show_game_details
+            )
+            self.action_widgets[seat_number].update_action(
+                player if name else None,
+                dealer=bool(name and name == dealer),
+                is_hero=bool(name and name == username),
+            )
+            self.bet_widgets[seat_number].set_amount(
+                player.get("current_bet", 0) if name else 0
+            )
+            if name:
+                self.player_seats[name] = seat_number
+        self._layout_table()
+
+    def show_showdown_hands(self, hands):
+        for hand_info in hands:
+            player = hand_info.get("player")
+            seat_number = self.player_seats.get(player)
+            widget = self.action_widgets.get(seat_number)
+            if widget is not None:
+                widget.show_showdown(hand_info)
+
+    def _visible_seats(self, table):
+        if not table:
+            return []
+        return [
+            seat
+            for seat in table.get("seats", [])
+            if seat.get("status") != "closed"
+        ]
+
+    def _set_visible_seats(self, seats, username=""):
+        visible_numbers = [int(seat.get("seat", 0)) for seat in seats]
+        visible = set(visible_numbers)
+        hero_seat = next(
+            (
+                int(seat.get("seat", 0))
+                for seat in seats
+                if username and seat.get("player") == username
+            ),
+            None,
+        )
+        if hero_seat in visible_numbers:
+            hero_index = visible_numbers.index(hero_seat)
+            visible_numbers = visible_numbers[hero_index:] + visible_numbers[:hero_index]
+        position_names = self.POSITION_ORDER.get(
+            len(visible_numbers),
+            self.POSITION_ORDER[10],
+        )
+        self.display_order = list(zip(visible_numbers, position_names))
+        for seat_number, widget in self.seat_widgets.items():
+            widget.setVisible(seat_number in visible)
+            self.action_widgets[seat_number].setVisible(
+                seat_number in visible and self.show_game_details
+            )
+            self.bet_widgets[seat_number].setVisible(False)
+
+    def _layout_table(self):
+        width = max(self.width(), 1)
+        height = max(self.height(), 1)
+        felt_margin_x = int(width * 0.14)
+        felt_margin_y = int(height * 0.26)
+        self.felt.setGeometry(
+            felt_margin_x,
+            felt_margin_y,
+            max(width - felt_margin_x * 2, 260),
+            max(height - felt_margin_y * 2, 160),
+        )
+
+        seats_in_play = max(1, len(self.display_order))
+        seat_w = max(72, min(176, int(width * 0.17), int(width / max(4.5, seats_in_play * 0.72))))
+        seat_h = max(40, min(58, int(seat_w * 0.44)))
+        action_w = max(150, min(210, int(width * 0.21)))
+        action_h = max(54, min(76, int(height * 0.13)))
+        bet_w = max(44, min(86, int(width * 0.08)))
+        bet_h = 26
+        for seat_number, position_name in self.display_order:
+            seat_x, seat_y = self.POSITIONS[position_name]
+            bet_x, bet_y = self.BET_POSITIONS[position_name]
+            self._place_widget(
+                self.seat_widgets[seat_number],
+                seat_x,
+                seat_y,
+                seat_w,
+                seat_h,
+            )
+            seat_geometry = self.seat_widgets[seat_number].geometry()
+            card_x = seat_geometry.x() + seat_geometry.width() / 2
+            card_y = seat_geometry.y() - action_h / 2 - 2
+            self._place_widget(
+                self.action_widgets[seat_number],
+                card_x / max(self.width(), 1),
+                card_y / max(self.height(), 1),
+                action_w,
+                action_h,
+            )
+            self._place_widget(
+                self.bet_widgets[seat_number],
+                bet_x,
+                bet_y,
+                bet_w,
+                bet_h,
+            )
+
+    def _place_widget(self, widget, x_ratio, y_ratio, width, height):
+        x = int(self.width() * x_ratio - width / 2)
+        y = int(self.height() * y_ratio - height / 2)
+        x = max(0, min(x, max(0, self.width() - width)))
+        y = max(0, min(y, max(0, self.height() - height)))
+        widget.setGeometry(x, y, width, height)
+        widget.raise_()
+        self.felt.lower()
+
+    def _community_cards_html(self, state):
+        if "top_board" in state:
+            return (
+                f"<b>Top:</b> {cards_html(state.get('top_board', []))}"
+                "<br>"
+                f"<b>Bottom:</b> {cards_html(state.get('bottom_board', []))}"
+            )
+        return cards_html(state.get("board", []))
+
+    def _community_cards_text(self, state):
+        if "top_board" in state:
+            return (
+                f"Top: {cards_text(state.get('top_board', []))} | "
+                f"Bottom: {cards_text(state.get('bottom_board', []))}"
+            )
+        return cards_text(state.get("board", []))
 
 
 class MainMenuView(QWidget):
@@ -253,6 +914,7 @@ class MainMenuView(QWidget):
 
 class LobbyView(QWidget):
     leave_requested = Signal()
+    seat_selected = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -270,10 +932,10 @@ class LobbyView(QWidget):
         self.status = QLabel("Connecting…")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        self.players = QTreeWidget()
-        self.players.setHeaderLabels(["Seat", "Player", "Ready status", "Stack"])
-        self.players.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        root.addWidget(self.players)
+        self._seat_selection_active = False
+        self.table_display = PokerTableDisplay(show_game_details=False)
+        self.table_display.seat_clicked.connect(self._seat_clicked)
+        root.addWidget(self.table_display, 1)
 
         note = QLabel(
             "PokerMeow starts a hand automatically when two seated players are present."
@@ -303,28 +965,25 @@ class LobbyView(QWidget):
     def set_table_id(self, table_id):
         self.table_id.setText(f"Table {table_id or '—'}")
 
-    def update_table(self, table):
+    def update_table(self, table, username=""):
         if not table:
             return
         self.set_table_id(table.get("table_id", ""))
-        self.players.clear()
-        for seat in table.get("seats", []):
-            status = seat.get("status", "open")
-            ready = {
-                "seated": "Ready",
-                "reserved": "Next hand",
-                "open": "Open",
-                "closed": "Closed",
-            }.get(status, status.title())
-            item = QTreeWidgetItem(
-                [
-                    str(seat.get("seat", "")),
-                    str(seat.get("player") or "—"),
-                    ready,
-                    str(seat.get("stack") if seat.get("stack") is not None else "—"),
-                ]
-            )
-            self.players.addTopLevelItem(item)
+        self.table_display.update_lobby(table, username)
+
+    def request_seat_selection(self, table, available_seats):
+        self.update_table(table)
+        self._seat_selection_active = True
+        self.table_display.set_pickable_seats(available_seats)
+        self.set_status("Choose a seat by clicking it.")
+
+    def clear_seat_selection(self):
+        self._seat_selection_active = False
+        self.table_display.clear_pickable_seats()
+
+    def _seat_clicked(self, seat_number):
+        if self._seat_selection_active:
+            self.seat_selected.emit(seat_number)
 
 
 class TableView(QWidget):
@@ -336,6 +995,9 @@ class TableView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         root = QGridLayout(self)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setHorizontalSpacing(8)
+        root.setVerticalSpacing(6)
 
         top = QHBoxLayout()
         self.table_name = QLabel("Poker table")
@@ -346,44 +1008,8 @@ class TableView(QWidget):
         top.addWidget(self.turn)
         root.addLayout(top, 0, 0, 1, 2)
 
-        felt = QGroupBox("Cards")
-        felt_layout = QVBoxLayout(felt)
-        cards_heading = QHBoxLayout()
-        cards_heading.addStretch()
-        self.pot = QLabel("Pot: 0")
-        self.pot.setObjectName("pill")
-        cards_heading.addWidget(self.pot)
-        felt_layout.addLayout(cards_heading)
-        self.board_label = QLabel("Community cards")
-        self.board = CardRow()
-        self.top_board_label = QLabel("Top board")
-        self.top_board = CardRow()
-        self.bottom_board_label = QLabel("Bottom board")
-        self.bottom_board = CardRow()
-        felt_layout.addWidget(self.board_label)
-        felt_layout.addWidget(self.board)
-        felt_layout.addWidget(self.top_board_label)
-        felt_layout.addWidget(self.top_board)
-        felt_layout.addWidget(self.bottom_board_label)
-        felt_layout.addWidget(self.bottom_board)
-
-        self.hole_label = QLabel("Your hole cards")
-        self.hole_label.setObjectName("subheading")
-        self.hole_cards = CardRow("Cards are dealt at the start of a hand")
-        felt_layout.addSpacing(12)
-        felt_layout.addWidget(self.hole_label)
-        felt_layout.addWidget(self.hole_cards)
-        root.addWidget(felt, 1, 0)
-
-        players_box = QGroupBox("Players")
-        players_layout = QVBoxLayout(players_box)
-        self.players = QTreeWidget()
-        self.players.setHeaderLabels(
-            ["Player", "Stack", "Bet", "Status", "Cards", "Hand"]
-        )
-        self.players.header().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        players_layout.addWidget(self.players)
-        root.addWidget(players_box, 2, 0)
+        self.table_display = PokerTableDisplay(show_game_details=True)
+        root.addWidget(self.table_display, 1, 0)
 
         side = QVBoxLayout()
         history_box = QGroupBox("Action history")
@@ -410,10 +1036,12 @@ class TableView(QWidget):
         chat_layout.addWidget(self.chat)
         chat_layout.addLayout(chat_controls)
         side.addWidget(chat_box, 1)
-        root.addLayout(side, 1, 1, 2, 1)
+        root.addLayout(side, 1, 1)
 
         actions = QGroupBox("Betting controls")
         actions_layout = QVBoxLayout(actions)
+        actions_layout.setContentsMargins(8, 8, 8, 8)
+        actions_layout.setSpacing(6)
 
         self.sizing_panel = QWidget()
         sizing_layout = QHBoxLayout(self.sizing_panel)
@@ -484,7 +1112,7 @@ class TableView(QWidget):
         self.leave_button.clicked.connect(self.leave_requested)
         base_actions.addWidget(self.leave_button)
         actions_layout.addLayout(base_actions)
-        root.addWidget(actions, 3, 0, 1, 2)
+        root.addWidget(actions, 2, 0, 1, 2)
         root.setColumnStretch(0, 3)
         root.setColumnStretch(1, 2)
 
@@ -495,90 +1123,23 @@ class TableView(QWidget):
         self.action_request = {}
         self.sizing_action = None
         self.sizing_amounts = {}
-        self._set_allocator_boards(False)
 
     def update_state(self, state, table, username):
-        self.pot.setText(f"Pot: {state.get('pot', 0)}")
         self.current_pot = self._decimal(state.get("pot", 0))
         if table:
             self.set_table_context(table.get("table_id"))
             self.table_name.setText(
                 f"{table.get('game', 'Poker')} · {table.get('table_id', '')}"
             )
-        allocator = "top_board" in state
-        self._set_allocator_boards(allocator)
-        if allocator:
-            self.top_board.set_cards(state.get("top_board", []))
-            self.bottom_board.set_cards(state.get("bottom_board", []))
-        else:
-            self.board.set_cards(state.get("board", []))
-
-        self.players.clear()
-        own_hand = []
-        dealer = state.get("dealer")
         for name, player in state.get("players", {}).items():
-            statuses = []
-            if name == dealer:
-                statuses.append("Dealer")
-            if player.get("folded"):
-                statuses.append("Folded")
-            if player.get("all_in"):
-                statuses.append("All-in")
             if name == username:
-                statuses.append("You")
-                own_hand = player.get("hand", [])
-                self.own_current_bet = self._decimal(
-                    player.get("current_bet", 0)
-                )
+                self.own_current_bet = self._decimal(player.get("current_bet", 0))
                 self.own_stack = self._decimal(player.get("stack", 0))
-            item = QTreeWidgetItem(
-                [
-                    name,
-                    str(player.get("stack", 0)),
-                    str(player.get("current_bet", 0)),
-                    ", ".join(statuses) or "Playing",
-                    "",
-                    "",
-                ]
-            )
-            if name == dealer:
-                font = item.font(0)
-                font.setBold(True)
-                item.setFont(0, font)
-            self.players.addTopLevelItem(item)
-        self.hole_cards.set_cards(own_hand)
+                break
+        self.table_display.update_game(state, table, username)
 
     def show_showdown_hands(self, hands):
-        hands_by_player = {
-            hand.get("player"): hand
-            for hand in hands
-            if hand.get("player")
-        }
-        for index in range(self.players.topLevelItemCount()):
-            item = self.players.topLevelItem(index)
-            hand_info = hands_by_player.get(item.text(0))
-            if hand_info is None:
-                item.setText(4, "")
-                item.setText(5, "")
-                continue
-            cards = " ".join(
-                compact_card_text(card)
-                for card in hand_info.get("hand", [])
-            )
-            rankings = hand_info.get("rankings")
-            if rankings:
-                ranking = (
-                    f"Top {rankings.get('top', '—')} / "
-                    f"Bottom {rankings.get('bottom', '—')} / "
-                    f"{rankings.get('hand_strength', '—')} / "
-                    f"{rankings.get('total', '—')} pts"
-                )
-            else:
-                ranking = hand_info.get("hand_name", "Unknown hand")
-            item.setText(4, cards)
-            item.setText(5, ranking)
-            item.setToolTip(4, cards)
-            item.setToolTip(5, ranking)
+        self.table_display.show_showdown_hands(hands)
 
     def set_legal_actions(self, request):
         self._close_sizing()
@@ -745,15 +1306,6 @@ class TableView(QWidget):
         except (InvalidOperation, TypeError, ValueError):
             pass
         return Decimal(0)
-
-    def _set_allocator_boards(self, allocator):
-        self.board_label.setVisible(not allocator)
-        self.board.setVisible(not allocator)
-        self.top_board_label.setVisible(allocator)
-        self.top_board.setVisible(allocator)
-        self.bottom_board_label.setVisible(allocator)
-        self.bottom_board.setVisible(allocator)
-
 
 class PokerStack(QStackedWidget):
     def __init__(self, parent=None):

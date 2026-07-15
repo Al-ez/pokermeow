@@ -23,7 +23,7 @@ QGroupBox::title {
     left: 12px;
     padding: 0 5px;
 }
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit, QTreeWidget {
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {
     background: #182235;
     border: 1px solid #3b4a63;
     border-radius: 5px;
@@ -56,11 +56,78 @@ QLabel#pill {
     border-radius: 7px;
     padding: 7px 12px;
 }
-QHeaderView::section {
-    background: #263449;
-    color: #e5e7eb;
-    padding: 7px;
+QFrame#pokerFelt {
+    background: #064e3b;
+    border: 8px solid #78350f;
+    border-radius: 28px;
+}
+QLabel#feltPot {
+    background: #052e2b;
+    color: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 14px;
+    padding: 8px 16px;
+    font-size: 18px;
+    font-weight: 800;
+}
+QLabel#feltBoard {
+    background: transparent;
+    color: #f8fafc;
     border: none;
+    padding: 0;
+    font-size: 20px;
+}
+QFrame#pokerSeat {
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+}
+QFrame#pokerSeat[occupied="true"] {
+    background: #f8fafc;
+    border: 1px solid #38bdf8;
+}
+QFrame#pokerSeat[hero="true"] {
+    background: #f8fafc;
+    border: 1px solid #38bdf8;
+}
+QFrame#pokerSeat[pickable="true"] {
+    border: 2px solid #facc15;
+    background: #fef9c3;
+}
+QLabel#seatPlayer {
+    background: transparent;
+    border: none;
+    color: #111827;
+    font-weight: 800;
+    font-size: 13px;
+}
+QLabel#seatStack {
+    background: transparent;
+    border: none;
+    color: #334155;
+    font-size: 11px;
+}
+QWidget#tableAction {
+    background: transparent;
+    border: none;
+}
+QLabel#tableActionTop {
+    color: #fde68a;
+    font-weight: 800;
+    font-size: 16px;
+}
+QLabel#seatHand {
+    color: #93c5fd;
+    font-size: 11px;
+}
+QLabel#dealerButton {
+    background: #f8fafc;
+    color: #111827;
+    border-radius: 10px;
+    min-width: 22px;
+    min-height: 22px;
+    max-width: 22px;
+    font-weight: 900;
 }
 """
 
