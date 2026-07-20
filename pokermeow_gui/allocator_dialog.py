@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .views import card_display_color, compact_card_html, compact_card_text
+from .views import card_display_color, compact_card_html
 
 
 CARD_MIME = "application/x-pokermeow-card-index"
@@ -97,6 +97,22 @@ class AllocationSlot(QLabel):
         super().mousePressEvent(event)
 
 
+class BoardCard(QLabel):
+    def __init__(self, card, board, parent=None):
+        super().__init__(compact_card_html(card), parent)
+        self.setObjectName("allocatorBoardCard")
+        self.setProperty("board", board)
+        self.setToolTip(str(card))
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedSize(48, 66)
+        self.setStyleSheet(
+            "background: white; "
+            f"color: {card_display_color(card)}; "
+            "border: 1px solid #94a3b8; border-radius: 7px; "
+            "font-size: 18px; font-weight: 700;"
+        )
+
+
 class AllocatorDialog(QDialog):
     submitted = Signal(list, list, list)
     ready_cancelled = Signal()
@@ -125,10 +141,6 @@ class AllocatorDialog(QDialog):
             "Drag each card into a slot, or click a card and then an empty slot. "
             "Click an assigned card to return it."
         ))
-        if top_board:
-            layout.addWidget(QLabel("Top board: " + "  ".join(map(compact_card_text, top_board))))
-        if bottom_board:
-            layout.addWidget(QLabel("Bottom board: " + "  ".join(map(compact_card_text, bottom_board))))
 
         card_row = QHBoxLayout()
         for index, card in enumerate(self.cards, 1):
@@ -139,6 +151,10 @@ class AllocatorDialog(QDialog):
         layout.addLayout(card_row)
 
         grid = QGridLayout()
+        boards = {
+            "top": list(top_board or []),
+            "bottom": list(bottom_board or []),
+        }
         for row, (bucket, title) in enumerate(self.BUCKETS):
             grid.addWidget(QLabel(title), row, 0)
             for position in range(2):
@@ -147,6 +163,17 @@ class AllocatorDialog(QDialog):
                 slot.clicked.connect(self.slot_clicked)
                 self.slots[(bucket, position)] = slot
                 grid.addWidget(slot, row, position + 1)
+            board = boards.get(bucket, [])
+            if board:
+                board_label = QLabel("Board")
+                board_label.setObjectName("allocatorBoardLabel")
+                grid.addWidget(board_label, row, 3)
+                for card_position, card in enumerate(board):
+                    grid.addWidget(
+                        BoardCard(card, bucket),
+                        row,
+                        card_position + 4,
+                    )
         layout.addLayout(grid)
 
         self.status = QLabel("Allocate all six cards, then click Ready.")
