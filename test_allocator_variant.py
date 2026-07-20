@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from allocator import Allocation, AllocatorGame, AllocatorScore
 from card import Card
+from plo import PotLimitOmahaGame
 
 
 def c(rank, suit):
@@ -178,6 +179,47 @@ def test_point_splitting_for_hand_strength_tie():
     assert points == {"Alice": Fraction(1, 2), "Bob": Fraction(1, 2)}
 
 
+def test_allocator_score_details_are_engine_authoritative():
+    game = make_game()
+    alice_cards = [
+        c("2", "clubs"), c("3", "diamonds"),
+        c("4", "clubs"), c("5", "diamonds"),
+        c("A", "clubs"), c("K", "diamonds"),
+    ]
+    bob_cards = [
+        c("6", "clubs"), c("7", "diamonds"),
+        c("8", "clubs"), c("9", "diamonds"),
+        c("A", "diamonds"), c("K", "clubs"),
+    ]
+    board = [
+        c("A", "hearts"), c("K", "hearts"),
+        c("Q", "hearts"), c("J", "hearts"), c("10", "hearts"),
+    ]
+    game.players[0].hand = alice_cards
+    game.players[1].hand = bob_cards
+    game.set_allocation(
+        "Alice", alice_cards[0:2], alice_cards[2:4], alice_cards[4:6]
+    )
+    game.set_allocation(
+        "Bob", bob_cards[0:2], bob_cards[2:4], bob_cards[4:6]
+    )
+
+    board_details = game.board_score_details(game.players, "top", board)
+    strength_details = game.hand_strength_score_details(game.players)
+
+    assert board_details["winners"] == ["Alice", "Bob"]
+    assert board_details["points"] == Fraction(1, 2)
+    assert strength_details["winners"] == ["Alice", "Bob"]
+    assert strength_details["points"] == Fraction(1, 2)
+
+
+def test_pot_limit_variants_share_limit_behaviour():
+    for game_class in (PotLimitOmahaGame, AllocatorGame):
+        game = game_class({"Alice": 1000, "Bob": 1000}, shuffle=False)
+        assert game.max_bet("Alice") == Decimal("10")
+        assert "all_in" not in game.legal_actions("Alice")
+
+
 def test_overall_winner_determined_by_total_allocator_score():
     alice = AllocatorScore(Fraction(1, 1), Fraction(0, 1), Fraction(1, 2))
     bob = AllocatorScore(Fraction(0, 1), Fraction(1, 1), Fraction(0, 1))
@@ -260,6 +302,8 @@ def run_tests():
         test_hand_strength_non_pairs_ignore_suits_and_tie,
         test_board_tie_splits_one_point_when_board_plays,
         test_point_splitting_for_hand_strength_tie,
+        test_allocator_score_details_are_engine_authoritative,
+        test_pot_limit_variants_share_limit_behaviour,
         test_overall_winner_determined_by_total_allocator_score,
         test_side_pot_winners_use_allocator_scores,
         test_allocator_side_pots_are_rescored_by_eligible_players,

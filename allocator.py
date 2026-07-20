@@ -4,7 +4,8 @@ from typing import Dict, List, Tuple
 
 from card import Card
 from deck import Deck
-from nlh import HandEvaluator, HandResult, NoLimitHoldemGame, RANK_VALUES, ZERO, money
+from nlh import HandEvaluator, HandResult, NoLimitHoldemGame, RANK_VALUES, ZERO
+from pot_limit import PotLimitBettingMixin
 
 
 @dataclass
@@ -29,7 +30,7 @@ class Allocation:
     hand: List[Card]
 
 
-class AllocatorGame(NoLimitHoldemGame):
+class AllocatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
     def __init__(
         self,
         player_stacks: Dict[str, int],
@@ -66,57 +67,10 @@ class AllocatorGame(NoLimitHoldemGame):
         self._post_bomb_pot_antes()
         self.action_index = self._next_active_index(self.dealer_index)
 
-    def legal_actions(self, player_name: str) -> List[str]:
-        actions = super().legal_actions(player_name)
-        player = self._player_by_name(player_name)
-
-        if "all_in" in actions and not self._can_move_all_in(player):
-            actions.remove("all_in")
-
-        return actions
-
-    def act(self, player_name: str, action: str, amount: int = 0):
-        player = self._player_by_name(player_name)
-        action = action.lower()
-        amount = money(amount)
-
-        if action == "bet":
-            max_bet = self.max_bet(player_name)
-            if amount > max_bet:
-                raise ValueError(f"Pot-limit bet cannot be more than {max_bet}")
-
-        elif action == "raise":
-            max_raise = self.max_raise_total(player_name)
-            if amount > max_raise:
-                raise ValueError(f"Pot-limit raise cannot be more than {max_raise}")
-
-        elif action == "all_in" and not self._can_move_all_in(player):
-            max_total = self.max_raise_total(player_name)
-            if self.current_bet == 0:
-                max_total = self.max_bet(player_name)
-            raise ValueError(f"All-in is above the pot-limit maximum of {max_total}")
-
-        return super().act(player_name, action, amount)
-
-    def max_bet(self, player_name: str) -> int:
-        player = self._player_by_name(player_name)
-        if self.current_bet != 0:
-            return 0
-
-        return min(player.stack, max(self.big_blind, self.pot))
-
-    def max_raise_total(self, player_name: str) -> int:
-        player = self._player_by_name(player_name)
-        to_call = self.current_bet - player.current_bet
-
-        if self.current_bet <= 0 or to_call < 0:
-            return 0
-
-        pot_after_call = self.pot + to_call
-        max_total = self.current_bet + pot_after_call
-        affordable_total = player.current_bet + player.stack
-
-        return min(max_total, affordable_total)
+    def _all_in_limit(self, player_name: str):
+        if self.current_bet == 0:
+            return self.max_bet(player_name)
+        return self.max_raise_total(player_name)
 
     def deal_flop(self) -> Tuple[List[Card], List[Card]]:
         self._reset_betting_round()
@@ -304,51 +258,86 @@ class AllocatorGame(NoLimitHoldemGame):
         for player in self.players:
             self.pot += player.commit(self.bomb_pot_ante)
 
-    def _can_move_all_in(self, player) -> bool:
-        if player.stack <= 0:
-            return False
-
-        if self.current_bet == 0:
-            return player.stack <= self.max_bet(player.name)
-
-        return player.current_bet + player.stack <= self.max_raise_total(player.name)
-
     def _score_board(
         self,
         active_players,
         allocation_name: str,
         board: List[Card],
     ) -> Dict[str, Fraction]:
-        board_scores = {}
+        details = self.board_score_details(
+            active_players,
+            allocation_name,
+            board,
+        )
+        return {
+            winner: details["points"]
+            for winner in details["winners"]
+        }
+
+    def board_score_details(
+        self,
+        active_players,
+        allocation_name: str,
+        board: List[Card],
+    ) -> Dict:
+        player_results = {}
         for player in active_players:
             allocation = self.allocations[player.name]
             allocated_cards = getattr(allocation, allocation_name)
-            board_scores[player.name] = HandEvaluator.best_hand(allocated_cards + board)
+            score = HandEvaluator.best_hand(allocated_cards + board)
+            player_results[player.name] = {
+                "cards": list(allocated_cards),
+                "hand_name": score[3],
+                "score": score[:2],
+                "best_five": list(score[2]),
+            }
 
-        best_score = max(score[:2] for score in board_scores.values())
+        best_score = max(
+            result["score"] for result in player_results.values()
+        )
         winners = [
-            player_name
-            for player_name, score in board_scores.items()
-            if score[:2] == best_score
+            player_name for player_name, result in player_results.items()
+            if result["score"] == best_score
         ]
-        point = Fraction(1, len(winners))
-
-        return {winner: point for winner in winners}
+        return {
+            "board": list(board),
+            "players": player_results,
+            "winners": winners,
+            "points": Fraction(1, len(winners)),
+        }
 
     def _score_hand_strength(self, active_players) -> Dict[str, Fraction]:
-        strength_scores = {
-            player.name: self.hand_strength_rank(self.allocations[player.name].hand)
-            for player in active_players
+        details = self.hand_strength_score_details(active_players)
+        return {
+            winner: details["points"]
+            for winner in details["winners"]
         }
-        best_score = max(strength_scores.values())
-        winners = [
-            player_name
-            for player_name, score in strength_scores.items()
-            if score == best_score
-        ]
-        point = Fraction(1, len(winners))
 
-        return {winner: point for winner in winners}
+    def hand_strength_score_details(self, active_players) -> Dict:
+        player_results = {}
+        for player in active_players:
+            cards = self.allocations[player.name].hand
+            player_results[player.name] = {
+                "cards": list(cards),
+                "label": (
+                    "pair" if cards[0].rank == cards[1].rank
+                    else "high card"
+                ),
+                "rank": self.hand_strength_rank(cards),
+            }
+
+        best_score = max(
+            result["rank"] for result in player_results.values()
+        )
+        winners = [
+            player_name for player_name, result in player_results.items()
+            if result["rank"] == best_score
+        ]
+        return {
+            "players": player_results,
+            "winners": winners,
+            "points": Fraction(1, len(winners)),
+        }
 
     @staticmethod
     def hand_strength_rank(cards: List[Card]) -> Tuple[int, int, int]:

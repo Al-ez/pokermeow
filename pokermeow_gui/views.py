@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import PORT
+from .formatting import decimal_or_zero, display_amount
 
 
 CARD_STYLE = """
@@ -63,14 +64,6 @@ def compact_card_html(card):
     )
 
 
-def stacked_card_text(card):
-    card_text = str(card)
-    rank, separator, suit = card_text.partition(" of ")
-    if not separator:
-        return card_text
-    return f"{rank}\n{SUIT_SYMBOLS.get(suit.lower(), suit)}"
-
-
 def stacked_card_html(card):
     rank, suit = card_rank_suit(card)
     suit_size = 18 if suit == "♣" else 15
@@ -89,11 +82,6 @@ def card_rank_suit(card):
     return rank, SUIT_SYMBOLS.get(suit.lower(), suit)
 
 
-def is_red_card(card):
-    card_text = str(card).lower()
-    return card_text.endswith("hearts") or "♥" in card_text
-
-
 def card_display_color(card, muted=False):
     card_text = str(card).lower()
     if card_text.endswith("hearts") or "♥" in card_text:
@@ -105,42 +93,8 @@ def card_display_color(card, muted=False):
     return "#334155" if muted else "#111827"
 
 
-def display_amount(value):
-    try:
-        amount = Decimal(str(value))
-        if amount.is_finite():
-            return format(amount.normalize(), "f")
-    except (InvalidOperation, TypeError, ValueError):
-        pass
-    return str(value)
-
-
 def cards_text(cards):
     return " ".join(compact_card_text(card) for card in cards) if cards else "—"
-
-
-def card_cell_html(text, color="#f8fafc", offset=0):
-    margin = 0 if offset == 0 else -12
-    content = escape(str(text)).replace("\n", "<br>")
-    return (
-        '<span style="'
-        "display:inline-block;"
-        "background:#f8fafc;"
-        f"color:{color};"
-        "border:1px solid #cbd5e1;"
-        "border-radius:6px;"
-        "width:34px;"
-        "height:42px;"
-        "padding:3px 0 0 4px;"
-        f"margin-left:{margin}px;"
-        "font-weight:800;"
-        "font-size:10px;"
-        "line-height:10px;"
-        "text-align:left;"
-        "vertical-align:top;"
-        '">'
-        f"{content}</span>"
-    )
 
 
 def cards_html(cards, spotlight=None):
@@ -182,32 +136,21 @@ def cards_html(cards, spotlight=None):
     )
 
 
-def card_backs_html(count):
-    try:
-        total = max(0, int(count))
-    except (TypeError, ValueError):
-        total = 0
-    cells = [
-        card_cell_html("\U0001F0A0", color="#bfdbfe", offset=index)
-        for index in range(total)
-    ]
-    return (
-        '<div align="center" style="white-space:nowrap;">'
-        + "".join(cells)
-        + "</div>"
-    )
-
-
 class CardRow(QWidget):
     def __init__(self, empty_text="No cards", parent=None):
         super().__init__(parent)
         self.empty_text = empty_text
+        self._cards_key = None
         self.row_layout = QHBoxLayout(self)
         self.row_layout.setContentsMargins(0, 0, 0, 0)
         self.row_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self.set_cards([])
 
     def set_cards(self, cards):
+        cards_key = tuple(str(card) for card in cards)
+        if cards_key == self._cards_key:
+            return
+        self._cards_key = cards_key
         while self.row_layout.count():
             item = self.row_layout.takeAt(0)
             if item.widget():
@@ -303,6 +246,7 @@ class CardFanWidget(QWidget):
         super().__init__(parent)
         self.card_labels = []
         self._animations = []
+        self._cards_key = None
         self.setMinimumSize(118, self.CARD_H + 2)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent; border: none;")
@@ -320,6 +264,7 @@ class CardFanWidget(QWidget):
         )
 
     def spotlight(self, cards):
+        self._cards_key = None
         spotlight = {str(card) for card in cards}
         self._animations = []
         for label in self.card_labels:
@@ -360,6 +305,10 @@ class CardFanWidget(QWidget):
         self._set_card_texts([])
 
     def _set_card_texts(self, cards):
+        cards_key = tuple(cards)
+        if cards_key == self._cards_key:
+            return
+        self._cards_key = cards_key
         while len(self.card_labels) > len(cards):
             label = self.card_labels.pop()
             label.deleteLater()
@@ -477,20 +426,10 @@ class PokerActionSpot(QWidget):
             return
         self.cards_label.clear()
 
-    @staticmethod
-    def _decimal(value):
-        try:
-            amount = Decimal(str(value))
-            if amount.is_finite():
-                return amount
-        except (InvalidOperation, TypeError, ValueError):
-            pass
-        return Decimal(0)
-
-
 class PokerBetSpot(QLabel):
     def __init__(self, parent=None):
         super().__init__("", parent)
+        self._amount_key = None
         self.setObjectName("tableActionTop")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -502,9 +441,14 @@ class PokerBetSpot(QLabel):
             parsed = Decimal(str(amount))
         except (InvalidOperation, TypeError, ValueError):
             parsed = Decimal(0)
+        amount_key = display_amount(amount) if parsed > 0 else ""
+        visible = parsed > 0
+        if amount_key == self._amount_key and self.isHidden() != visible:
+            return
+        self._amount_key = amount_key
         self.setStyleSheet("background: transparent; border: none;")
-        self.setText(display_amount(amount) if parsed > 0 else "")
-        self.setVisible(parsed > 0)
+        self.setText(amount_key)
+        self.setVisible(visible)
 
     def show_payout(self, amount):
         try:
@@ -513,6 +457,7 @@ class PokerBetSpot(QLabel):
             parsed = Decimal(0)
         if parsed <= 0:
             return
+        self._amount_key = None
         self.setText(f"+{display_amount(parsed)}")
         self.setStyleSheet(
             "background: #14532d; color: #bbf7d0;"
@@ -610,6 +555,7 @@ class PokerTableDisplay(QWidget):
         self.display_order = []
         self.pickable_seats = set()
         self.community_cards = []
+        self._layout_key = None
         self.setMinimumHeight(420 if show_game_details else 360)
 
         self.felt = QFrame()
@@ -665,7 +611,7 @@ class PokerTableDisplay(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._layout_table()
+        self._layout_table(force=True)
 
     def set_pickable_seats(self, seats):
         self.pickable_seats = {int(seat) for seat in seats}
@@ -865,7 +811,23 @@ class PokerTableDisplay(QWidget):
             self.bet_widgets[seat_number].setVisible(False)
             self.dealer_widgets[seat_number].setVisible(False)
 
-    def _layout_table(self):
+    def _layout_table(self, force=False):
+        layout_key = (
+            self.width(),
+            self.height(),
+            tuple(self.display_order),
+            tuple(
+                (
+                    seat_number,
+                    self.bet_widgets[seat_number].isVisible(),
+                    self.bet_widgets[seat_number].sizeHint().width(),
+                )
+                for seat_number, _ in self.display_order
+            ),
+        )
+        if not force and layout_key == self._layout_key:
+            return
+        self._layout_key = layout_key
         width = max(self.width(), 1)
         height = max(self.height(), 1)
         felt_margin_x = int(width * 0.14)
@@ -1312,7 +1274,7 @@ class TableView(QWidget):
         self.sizing_amounts = {}
 
     def update_state(self, state, table, username):
-        self.current_pot = self._decimal(state.get("pot", 0))
+        self.current_pot = decimal_or_zero(state.get("pot", 0))
         if table:
             self.set_table_context(table.get("table_id"))
             self.table_name.setText(
@@ -1320,8 +1282,10 @@ class TableView(QWidget):
             )
         for name, player in state.get("players", {}).items():
             if name == username:
-                self.own_current_bet = self._decimal(player.get("current_bet", 0))
-                self.own_stack = self._decimal(player.get("stack", 0))
+                self.own_current_bet = decimal_or_zero(
+                    player.get("current_bet", 0)
+                )
+                self.own_stack = decimal_or_zero(player.get("stack", 0))
                 break
         self.table_display.update_game(state, table, username)
 
@@ -1463,7 +1427,7 @@ class TableView(QWidget):
         self.sizing_amounts = {}
 
     def _preset_amount(self, action, fraction):
-        to_call = self._decimal(self.action_request.get("to_call", 0))
+        to_call = decimal_or_zero(self.action_request.get("to_call", 0))
         if action == "bet":
             raw_amount = self.current_pot * fraction
         else:
@@ -1479,12 +1443,12 @@ class TableView(QWidget):
 
     def _amount_bounds(self, action):
         if action == "bet":
-            minimum = self._decimal(
+            minimum = decimal_or_zero(
                 self.action_request.get("min_raise", 0)
             )
             maximum_value = self.action_request.get("max_bet")
         else:
-            minimum = self._decimal(
+            minimum = decimal_or_zero(
                 self.action_request.get(
                     "min_raise_to",
                     self.action_request.get("min_raise", 0),
@@ -1494,19 +1458,9 @@ class TableView(QWidget):
         if maximum_value is None:
             maximum = self.own_current_bet + self.own_stack
         else:
-            maximum = self._decimal(maximum_value)
+            maximum = decimal_or_zero(maximum_value)
         maximum = max(minimum, maximum)
         return minimum, maximum
-
-    @staticmethod
-    def _decimal(value):
-        try:
-            amount = Decimal(str(value))
-            if amount.is_finite():
-                return amount
-        except (InvalidOperation, TypeError, ValueError):
-            pass
-        return Decimal(0)
 
 class PokerStack(QStackedWidget):
     def __init__(self, parent=None):

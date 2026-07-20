@@ -7,7 +7,6 @@ import threading
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from fractions import Fraction
 
 from allocator import AllocatorGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
@@ -566,87 +565,6 @@ class PokerTableSession:
             raise RuntimeError("Buy-in must be greater than zero")
 
         client.buy_in = buy_in
-
-    def _accept_clients(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_socket.bind((self.host, self.port))
-            server_socket.listen(MAX_CONNECTIONS)
-
-            while True:
-                socket_obj, address = server_socket.accept()
-                client = Client(socket_obj, address, self.shutdown_event)
-                thread = threading.Thread(
-                    target=self._handle_new_client,
-                    args=(client, address),
-                    daemon=True,
-                )
-                thread.start()
-
-    def _handle_new_client(self, client, address):
-        try:
-            reconnected = self._welcome_client(client)
-        except Exception:
-            self._release_pending_name(client.name)
-            client.close()
-            return
-
-        with self.all_clients_lock:
-            self.all_clients.append(client)
-
-        if reconnected:
-            print(f"{client.name} reconnected from {address[0]}:{address[1]}.")
-            client.send(
-                {
-                    "type": "message",
-                    "message": "Reconnected to your seat.",
-                }
-            )
-        else:
-            self._place_new_client(client, address)
-
-        self._release_pending_name(client.name)
-
-    def _welcome_client(self, client):
-        client.send({"type": "welcome", "message": "Connected to PokerMeow server."})
-        client.send({"type": "request_name"})
-        message = client.recv()
-        if not message or message.get("type") != "join":
-            raise RuntimeError("Client disconnected before joining")
-
-        name = message.get("name", "").strip()
-        if not name:
-            name = "Player"
-
-        disconnected_client = self.table.disconnected_client_by_name(name)
-        if disconnected_client is not None:
-            if not self.table.replace_client(name, client):
-                raise RuntimeError("Unable to reconnect player")
-
-            client.send({"type": "joined", "name": client.name})
-            self._send_reconnect_snapshot(client)
-            return True
-
-        name = self._claim_unique_name(client, name)
-
-        client.name = name
-        client.send({"type": "joined", "name": client.name})
-
-        client.send({"type": "request_buy_in"})
-        buy_in_message = client.recv()
-        if not buy_in_message or buy_in_message.get("type") != "buy_in":
-            raise RuntimeError("Client disconnected before choosing a buy-in")
-
-        try:
-            buy_in = parse_money(buy_in_message.get("amount"), "Buy-in")
-        except (TypeError, ValueError):
-            raise RuntimeError("Invalid buy-in amount")
-
-        if buy_in <= 0:
-            raise RuntimeError("Buy-in must be greater than zero")
-
-        client.buy_in = buy_in
-        return False
 
     def _release_pending_name(self, name):
         if not name:
@@ -1431,33 +1349,20 @@ class PokerTableSession:
         }
 
     def _allocator_board_detail(self, active_players, allocation_name, board):
-        player_results = {}
-        for player in active_players:
-            allocation = self.game.allocations[player.name]
-            allocated_cards = getattr(allocation, allocation_name)
-            score = HandEvaluator.best_hand(allocated_cards + board)
-            player_results[player.name] = {
-                "cards": [str(card) for card in allocated_cards],
-                "hand_name": score[3],
-                "score": score[:2],
-                "best_five": [str(card) for card in score[2]],
-            }
-
-        best_score = max(result["score"] for result in player_results.values())
-        winners = [
-            player_name
-            for player_name, result in player_results.items()
-            if result["score"] == best_score
-        ]
-        points = Fraction(1, len(winners))
+        details = self.game.board_score_details(
+            active_players,
+            allocation_name,
+            board,
+        )
+        player_results = details["players"]
 
         return {
-            "board": [str(card) for card in board],
+            "board": [str(card) for card in details["board"]],
             "players": {
                 player_name: {
-                    "cards": result["cards"],
+                    "cards": [str(card) for card in result["cards"]],
                     "hand_name": result["hand_name"],
-                    "best_five": result["best_five"],
+                    "best_five": [str(card) for card in result["best_five"]],
                 }
                 for player_name, result in player_results.items()
             },
@@ -1465,36 +1370,20 @@ class PokerTableSession:
                 {
                     "player": winner,
                     "hand_name": player_results[winner]["hand_name"],
-                    "points": self._format_points(points),
+                    "points": self._format_points(details["points"]),
                 }
-                for winner in winners
+                for winner in details["winners"]
             ],
         }
 
     def _allocator_hand_strength_detail(self, active_players):
-        player_results = {}
-        for player in active_players:
-            cards = self.game.allocations[player.name].hand
-            rank = self.game.hand_strength_rank(cards)
-            label = "pair" if cards[0].rank == cards[1].rank else "high card"
-            player_results[player.name] = {
-                "cards": [str(card) for card in cards],
-                "label": label,
-                "rank": rank,
-            }
-
-        best_rank = max(result["rank"] for result in player_results.values())
-        winners = [
-            player_name
-            for player_name, result in player_results.items()
-            if result["rank"] == best_rank
-        ]
-        points = Fraction(1, len(winners))
+        details = self.game.hand_strength_score_details(active_players)
+        player_results = details["players"]
 
         return {
             "players": {
                 player_name: {
-                    "cards": result["cards"],
+                    "cards": [str(card) for card in result["cards"]],
                     "label": result["label"],
                 }
                 for player_name, result in player_results.items()
@@ -1503,9 +1392,9 @@ class PokerTableSession:
                 {
                     "player": winner,
                     "label": player_results[winner]["label"],
-                    "points": self._format_points(points),
+                    "points": self._format_points(details["points"]),
                 }
-                for winner in winners
+                for winner in details["winners"]
             ],
         }
 
@@ -2067,49 +1956,6 @@ def main():
         port=args.port,
     )
     server.run()
-
-
-def ask_choice(prompt, choices):
-    while True:
-        value = input(prompt).strip().lower()
-        if value in choices:
-            return choices[value]
-
-        if value in choices.values():
-            return value
-
-        print("Please choose a valid option.")
-
-
-def ask_positive_int(prompt, default):
-    while True:
-        value = input(prompt).strip()
-        if not value:
-            return default
-
-        try:
-            number = int(value)
-        except ValueError:
-            print("Please enter a whole number.")
-            continue
-
-        if number <= 0:
-            print("Please enter a number greater than zero.")
-            continue
-
-        return number
-
-
-def ask_seat_count(value=None):
-    while True:
-        if value is None:
-            value = ask_positive_int("Number of seats: ", default=10)
-
-        if 2 <= value <= 10:
-            return value
-
-        print("Number of seats must be between 2 and 10.")
-        value = None
 
 
 if __name__ == "__main__":
