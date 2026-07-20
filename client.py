@@ -296,7 +296,7 @@ def ask_positive_int(prompt, default=None):
 
 def ask_table_config():
     while True:
-        game_choice = prompt_input("Choose game: [1] NLH  [2] PLO  [3] Allocator: ").strip()
+        game_choice = prompt_input("Choose game: [1] NLH  [2] PLO  [3] Allocator  [4] Helicopter: ").strip()
         if game_choice == "1":
             game = "nlh"
             break
@@ -306,9 +306,12 @@ def ask_table_config():
         if game_choice == "3":
             game = "allocator"
             break
-        print("Please choose 1, 2, or 3.")
+        if game_choice == "4":
+            game = "helicopter"
+            break
+        print("Please choose 1, 2, 3, or 4.")
 
-    seat_cap = 10 if game == "nlh" else 7
+    seat_cap = 10 if game == "nlh" else (6 if game == "helicopter" else 7)
     max_seats = ask_positive_int(
         f"Number of seats [{seat_cap}]: ",
         default=seat_cap,
@@ -326,7 +329,7 @@ def ask_table_config():
         "max_seats": max_seats,
     }
 
-    if game == "allocator":
+    if game in {"allocator", "helicopter"}:
         config["bomb_pot_ante"] = ask_positive_int("Bomb pot ante per player [10]: ", default=10)
     else:
         config["big_blind"] = ask_blinds()
@@ -381,8 +384,7 @@ def ask_allocator_allocation(cards, top_board=None, bottom_board=None):
     bottom_indexes = ask_card_indexes("Bottom board cards: ", available_indexes)
     available_indexes -= set(bottom_indexes)
 
-    hand_indexes = sorted(available_indexes)
-    print(f"Hand strength cards: {' '.join(str(index) for index in hand_indexes)}")
+    hand_indexes = ask_card_indexes("Hand strength cards: ", available_indexes)
 
     return top_indexes, bottom_indexes, hand_indexes
 

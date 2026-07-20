@@ -1,6 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
 from allocator import AllocatorGame
+from helicopter import HelicopterGame
 from nlh import NoLimitHoldemGame
 from plo import PotLimitOmahaGame
 
@@ -302,8 +303,7 @@ def ask_allocator_allocation(game, hero_name):
     bottom_indexes = ask_card_indexes("Bottom board cards: ", available_indexes)
     available_indexes -= set(bottom_indexes)
 
-    hand_indexes = sorted(available_indexes)
-    print(f"Hand strength cards: {' '.join(str(index) for index in hand_indexes)}")
+    hand_indexes = ask_card_indexes("Hand strength cards: ", available_indexes)
 
     game.set_allocation(
         hero_name,
@@ -458,13 +458,16 @@ def main():
     print("Poker CLI")
     print("=" * 60)
 
-    game_choice = input("Choose game: [1] NLH  [2] PLO  [3] Allocator: ").strip()
+    game_choice = input("Choose game: [1] NLH  [2] PLO  [3] Allocator  [4] Helicopter: ").strip()
     if game_choice == "2":
         game_class = PotLimitOmahaGame
         game_name = "Pot-Limit Omaha"
     elif game_choice == "3":
         game_class = AllocatorGame
         game_name = "Allocator"
+    elif game_choice == "4":
+        game_class = HelicopterGame
+        game_name = "Helicopter"
     else:
         game_class = NoLimitHoldemGame
         game_name = "No-Limit Texas Hold'em"
@@ -483,7 +486,7 @@ def main():
         starting_stack = 1000
 
     bomb_pot_ante = 0
-    if game_class is AllocatorGame:
+    if issubclass(game_class, AllocatorGame):
         small_blind = 1
         big_blind = 2
         bomb_pot_ante = ask_int("Bomb pot ante per player: ")
@@ -497,7 +500,7 @@ def main():
     for index in range(1, bot_count + 1):
         player_stacks[f"Bot {index}"] = starting_stack
 
-    if game_class is AllocatorGame:
+    if issubclass(game_class, AllocatorGame):
         game = game_class(
             player_stacks,
             small_blind=small_blind,

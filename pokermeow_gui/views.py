@@ -241,6 +241,8 @@ class CardFanWidget(QWidget):
     CARD_W = 34
     CARD_H = 42
     STEP = 22
+    MAX_CARDS_PER_ROW = 6
+    ROW_GAP = 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -336,6 +338,11 @@ class CardFanWidget(QWidget):
             )
             label.show()
         self.setVisible(bool(cards))
+        rows = max(
+            1,
+            (len(cards) + self.MAX_CARDS_PER_ROW - 1) // self.MAX_CARDS_PER_ROW,
+        )
+        self.setMinimumHeight(rows * self.CARD_H + (rows - 1) * self.ROW_GAP + 2)
         self._layout_cards()
 
     def resizeEvent(self, event):
@@ -346,13 +353,21 @@ class CardFanWidget(QWidget):
         total = len(self.card_labels)
         if not total:
             return
-        fan_w = self.CARD_W + self.STEP * (total - 1)
-        start_x = max(0, int((self.width() - fan_w) / 2))
-        start_y = max(0, int((self.height() - self.CARD_H) / 2))
+        rows = (total + self.MAX_CARDS_PER_ROW - 1) // self.MAX_CARDS_PER_ROW
+        total_h = rows * self.CARD_H + (rows - 1) * self.ROW_GAP
+        start_y = max(0, int((self.height() - total_h) / 2))
         for index, label in enumerate(self.card_labels):
+            row = index // self.MAX_CARDS_PER_ROW
+            column = index % self.MAX_CARDS_PER_ROW
+            row_count = min(
+                self.MAX_CARDS_PER_ROW,
+                total - row * self.MAX_CARDS_PER_ROW,
+            )
+            fan_w = self.CARD_W + self.STEP * (row_count - 1)
+            start_x = max(0, int((self.width() - fan_w) / 2))
             label.setGeometry(
-                start_x + self.STEP * index,
-                start_y,
+                start_x + self.STEP * column,
+                start_y + row * (self.CARD_H + self.ROW_GAP),
                 self.CARD_W,
                 self.CARD_H,
             )
@@ -824,6 +839,10 @@ class PokerTableDisplay(QWidget):
                 )
                 for seat_number, _ in self.display_order
             ),
+            tuple(
+                len(self.action_widgets[seat_number].cards_label.card_labels)
+                for seat_number, _ in self.display_order
+            ),
         )
         if not force and layout_key == self._layout_key:
             return
@@ -857,13 +876,17 @@ class PokerTableDisplay(QWidget):
             )
             seat_geometry = self.seat_widgets[seat_number].geometry()
             card_x = seat_geometry.x() + seat_geometry.width() / 2
-            card_y = seat_geometry.y() - action_h / 2 - 2
+            card_count = len(
+                self.action_widgets[seat_number].cards_label.card_labels
+            )
+            local_action_h = max(action_h, 94) if card_count > 6 else action_h
+            card_y = seat_geometry.y() - local_action_h / 2 - 2
             self._place_widget(
                 self.action_widgets[seat_number],
                 card_x / max(self.width(), 1),
                 card_y / max(self.height(), 1),
                 action_w,
-                action_h,
+                local_action_h,
             )
             bet_widget = self.bet_widgets[seat_number]
             marker_w = max(bet_w, min(180, bet_widget.sizeHint().width() + 8))
@@ -974,6 +997,7 @@ class MainMenuView(QWidget):
         self.game.addItem("No-Limit Texas Hold'em", "nlh")
         self.game.addItem("Pot-Limit Omaha", "plo")
         self.game.addItem("Allocator", "allocator")
+        self.game.addItem("Helicopter", "helicopter")
         self.seats = QSpinBox()
         self.seats.setRange(2, 10)
         self.seats.setValue(6)
@@ -1025,10 +1049,11 @@ class MainMenuView(QWidget):
         self.status.setText(text)
 
     def _game_changed(self):
-        allocator = self.game.currentData() == "allocator"
+        allocator = self.game.currentData() in {"allocator", "helicopter"}
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.big_blind, not allocator)
-        self.seats.setMaximum(10 if self.game.currentData() == "nlh" else 7)
+        game = self.game.currentData()
+        self.seats.setMaximum(10 if game == "nlh" else (6 if game == "helicopter" else 7))
 
     def _set_mode(self, mode):
         self.mode = mode
@@ -1044,7 +1069,7 @@ class MainMenuView(QWidget):
             "game": self.game.currentData(),
             "max_seats": self.seats.value(),
         }
-        if config["game"] == "allocator":
+        if config["game"] in {"allocator", "helicopter"}:
             config["bomb_pot_ante"] = self.bomb_ante.value()
         else:
             config["big_blind"] = self.big_blind.value()

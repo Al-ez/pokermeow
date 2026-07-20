@@ -131,7 +131,7 @@ class AllocatorDialog(QDialog):
         self.assignments = {name: [None, None] for name, _ in self.BUCKETS}
         self.card_widgets = {}
         self.slots = {}
-        self.setWindowTitle("Allocator card allocation")
+        self.setWindowTitle("Card allocation")
         self.setModal(True)
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setMinimumWidth(650)
@@ -142,12 +142,12 @@ class AllocatorDialog(QDialog):
             "Click an assigned card to return it."
         ))
 
-        card_row = QHBoxLayout()
+        card_row = QGridLayout()
         for index, card in enumerate(self.cards, 1):
             widget = AllocationCard(index, card)
             widget.clicked.connect(self.select_card)
             self.card_widgets[index] = widget
-            card_row.addWidget(widget)
+            card_row.addWidget(widget, (index - 1) // 6, (index - 1) % 6)
         layout.addLayout(card_row)
 
         grid = QGridLayout()
@@ -176,7 +176,7 @@ class AllocatorDialog(QDialog):
                     )
         layout.addLayout(grid)
 
-        self.status = QLabel("Allocate all six cards, then click Ready.")
+        self.status = QLabel("Choose six cards for the three scoring slots, then click Ready.")
         layout.addWidget(self.status)
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -230,8 +230,8 @@ class AllocatorDialog(QDialog):
         if any(index is None for index in flattened):
             QMessageBox.warning(self, "Invalid allocation", "Place one card in every slot.")
             return
-        if sorted(flattened) != list(range(1, 7)):
-            QMessageBox.warning(self, "Invalid allocation", "Use every card exactly once.")
+        if len(set(flattened)) != 6:
+            QMessageBox.warning(self, "Invalid allocation", "Use six different cards.")
             return
         self.submitted.emit(*[list(bucket) for bucket in buckets])
         self.is_ready = True

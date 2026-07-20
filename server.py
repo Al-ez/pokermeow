@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from allocator import AllocatorGame
+from helicopter import HelicopterGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
 from nlh import HandEvaluator, NoLimitHoldemGame
@@ -422,7 +423,7 @@ class PokerTableSession:
     def run(self):
         print(f"Table {self.table_id} started.")
         print(f"Game: {self.game_name}")
-        if self.game_class is AllocatorGame:
+        if issubclass(self.game_class, AllocatorGame):
             print(f"Bomb pot ante: {self.bomb_pot_ante}")
         else:
             print(f"Blinds: {self.small_blind}/{self.big_blind}")
@@ -732,7 +733,7 @@ class PokerTableSession:
         seated_clients = self.table.seated_clients()
         player_stacks = self.table.seated_player_stacks()
 
-        if self.game_class is AllocatorGame:
+        if issubclass(self.game_class, AllocatorGame):
             self.game = self.game_class(
                 player_stacks,
                 small_blind=1,
@@ -755,7 +756,7 @@ class PokerTableSession:
             self._broadcast_hand_message(seated_clients, "New hand started.")
             self._send_states_to(seated_clients)
 
-            if self.game_class is not AllocatorGame:
+            if not issubclass(self.game_class, AllocatorGame):
                 self._run_betting_round(seated_clients)
 
             if len(self.game.active_players()) > 1 and self._should_skip_to_showdown():
@@ -764,7 +765,7 @@ class PokerTableSession:
                 self.game.deal_flop()
                 self._broadcast_hand_message(
                     seated_clients,
-                    "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
+                    "Flops dealt." if issubclass(self.game_class, AllocatorGame) else "Flop dealt.",
                 )
                 self._send_states_to(seated_clients)
                 self._run_betting_round(seated_clients)
@@ -776,7 +777,7 @@ class PokerTableSession:
                     self.game.deal_turn()
                     self._broadcast_hand_message(
                         seated_clients,
-                        "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
+                        "Turns dealt." if issubclass(self.game_class, AllocatorGame) else "Turn dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -788,7 +789,7 @@ class PokerTableSession:
                     self.game.deal_river()
                     self._broadcast_hand_message(
                         seated_clients,
-                        "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
+                        "Rivers dealt." if issubclass(self.game_class, AllocatorGame) else "River dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -796,7 +797,7 @@ class PokerTableSession:
             if len(self.game.active_players()) > 1 and len(self.game.board) < 5:
                 self._deal_remaining_board(seated_clients)
 
-            if self.game_class is AllocatorGame and len(self.game.active_players()) > 1:
+            if issubclass(self.game_class, AllocatorGame) and len(self.game.active_players()) > 1:
                 self._request_allocator_allocations(seated_clients)
 
             result = self.game.showdown()
@@ -808,7 +809,7 @@ class PokerTableSession:
                     for winner in result.winners
                 }
                 allocator_details = None
-            elif self.game_class is AllocatorGame:
+            elif issubclass(self.game_class, AllocatorGame):
                 scores = self.game.calculate_scores()
                 player_hand_names = {
                     player.name: f"{scores[player.name].total} points"
@@ -1126,21 +1127,21 @@ class PokerTableSession:
             self.game.deal_flop()
             self._broadcast_hand_message(
                 seated_clients,
-                "Flops dealt." if self.game_class is AllocatorGame else "Flop dealt.",
+                "Flops dealt." if issubclass(self.game_class, AllocatorGame) else "Flop dealt.",
             )
 
         if len(self.game.board) < 4:
             self.game.deal_turn()
             self._broadcast_hand_message(
                 seated_clients,
-                "Turns dealt." if self.game_class is AllocatorGame else "Turn dealt.",
+                "Turns dealt." if issubclass(self.game_class, AllocatorGame) else "Turn dealt.",
             )
 
         if len(self.game.board) < 5:
             self.game.deal_river()
             self._broadcast_hand_message(
                 seated_clients,
-                "Rivers dealt." if self.game_class is AllocatorGame else "River dealt.",
+                "Rivers dealt." if issubclass(self.game_class, AllocatorGame) else "River dealt.",
             )
 
         self._send_states_to(seated_clients)
@@ -1251,9 +1252,9 @@ class PokerTableSession:
                         ready_condition.notify_all()
                     return
 
-                top_indexes = self._parse_card_indexes(message.get("top"))
-                bottom_indexes = self._parse_card_indexes(message.get("bottom"))
-                hand_indexes = self._parse_card_indexes(message.get("hand"))
+                top_indexes = self._parse_card_indexes(message.get("top"), len(player.hand))
+                bottom_indexes = self._parse_card_indexes(message.get("bottom"), len(player.hand))
+                hand_indexes = self._parse_card_indexes(message.get("hand"), len(player.hand))
 
                 self.game.set_allocation(
                     player.name,
@@ -1275,7 +1276,7 @@ class PokerTableSession:
                 client.send({"type": "error", "message": str(error)})
 
     @staticmethod
-    def _parse_card_indexes(indexes):
+    def _parse_card_indexes(indexes, max_index=6):
         if not isinstance(indexes, list):
             raise ValueError("Allocation indexes must be a list")
 
@@ -1286,8 +1287,8 @@ class PokerTableSession:
         if len(set(parsed)) != 2:
             raise ValueError("Do not use the same card twice in one bucket")
 
-        if any(index < 1 or index > 6 for index in parsed):
-            raise ValueError("Card indexes must be from 1 to 6")
+        if any(index < 1 or index > max_index for index in parsed):
+            raise ValueError(f"Card indexes must be from 1 to {max_index}")
 
         return parsed
 
@@ -1588,7 +1589,7 @@ class PokerTableSession:
     def _showdown_display_seconds(self, result):
         if result.hand_name == "uncontested":
             return 2
-        if self.game_class is AllocatorGame:
+        if issubclass(self.game_class, AllocatorGame):
             return 15
         return TIMEOUTS["showdown_display"]
 
@@ -1849,17 +1850,20 @@ class NetworkPokerServer:
         elif game_choice == "allocator":
             game_class = AllocatorGame
             game_name = "Allocator"
+        elif game_choice == "helicopter":
+            game_class = HelicopterGame
+            game_name = "Helicopter"
         else:
             game_class = NoLimitHoldemGame
             game_name = "No-Limit Texas Hold'em"
 
         max_seats = self._parse_int(message.get("max_seats"), "Number of seats")
-        seat_cap = 10 if game_class is NoLimitHoldemGame else 7
+        seat_cap = 10 if game_class is NoLimitHoldemGame else (6 if game_class is HelicopterGame else 7)
         if max_seats < 2 or max_seats > seat_cap:
             raise RuntimeError(f"Number of seats must be between 2 and {seat_cap}")
 
         bomb_pot_ante = 0
-        if game_class is AllocatorGame:
+        if issubclass(game_class, AllocatorGame):
             small_blind = Decimal("1")
             big_blind = Decimal("2")
             bomb_pot_ante = self._parse_int(
