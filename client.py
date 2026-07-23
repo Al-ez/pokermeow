@@ -339,11 +339,21 @@ def ask_table_config():
         config["bomb_pot_ante"] = ask_positive_int("Bomb pot ante per player [10]: ", default=10)
     elif game == "aof":
         config["ante"] = ask_positive_int("Ante per player [3]: ", default=3)
-        multiplier = ask_positive_int("Multiplier [10]: ", default=10)
-        while multiplier < 10:
-            print("Multiplier must be at least 10.")
-            multiplier = ask_positive_int("Multiplier [10]: ", default=10)
+        multiplier = ask_positive_int(
+            "Multiplier [10/15/20/25/30, default 10]: ",
+            default=10,
+        )
+        while multiplier not in {10, 15, 20, 25, 30}:
+            print("Multiplier must be 10, 15, 20, 25, or 30.")
+            multiplier = ask_positive_int(
+                "Multiplier [10/15/20/25/30, default 10]: ",
+                default=10,
+            )
         config["multiplier"] = multiplier
+        allow_run_twice = prompt_input(
+            "Allow run it twice? [y/N]: "
+        ).strip().lower()
+        config["allow_run_twice"] = allow_run_twice in {"y", "yes"}
     else:
         config["big_blind"] = ask_blinds()
 

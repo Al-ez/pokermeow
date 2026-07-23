@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
+    QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -1091,18 +1092,42 @@ class MainMenuView(QWidget):
         self.aof_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
-        self.aof_multiplier = QSpinBox()
-        self.aof_multiplier.setRange(10, 1_000_000)
-        self.aof_multiplier.setValue(10)
-        self.aof_multiplier.setButtonSymbols(
-            QAbstractSpinBox.ButtonSymbols.NoButtons
-        )
+        self.aof_multiplier = QWidget()
+        multiplier_layout = QHBoxLayout(self.aof_multiplier)
+        multiplier_layout.setContentsMargins(0, 0, 0, 0)
+        multiplier_layout.setSpacing(6)
+        self.aof_multiplier_group = QButtonGroup(self)
+        self.aof_multiplier_group.setExclusive(True)
+        self.aof_multiplier_buttons = {}
+        for multiplier in (10, 15, 20, 25, 30):
+            button = QPushButton(str(multiplier))
+            button.setCheckable(True)
+            self.aof_multiplier_group.addButton(button, multiplier)
+            self.aof_multiplier_buttons[multiplier] = button
+            multiplier_layout.addWidget(button)
+        self.aof_multiplier_buttons[10].setChecked(True)
+
+        self.aof_run_twice = QWidget()
+        run_twice_layout = QHBoxLayout(self.aof_run_twice)
+        run_twice_layout.setContentsMargins(0, 0, 0, 0)
+        run_twice_layout.setSpacing(6)
+        self.aof_run_twice_group = QButtonGroup(self)
+        self.aof_run_twice_group.setExclusive(True)
+        self.aof_run_twice_no = QPushButton("No")
+        self.aof_run_twice_yes = QPushButton("Yes")
+        for button in (self.aof_run_twice_no, self.aof_run_twice_yes):
+            button.setCheckable(True)
+            run_twice_layout.addWidget(button)
+        self.aof_run_twice_group.addButton(self.aof_run_twice_no, 0)
+        self.aof_run_twice_group.addButton(self.aof_run_twice_yes, 1)
+        self.aof_run_twice_no.setChecked(True)
         self.host_form.addRow("Game", self.game)
         self.host_form.addRow("Seats", self.seats)
         self.host_form.addRow("Big blind", self.big_blind)
         self.host_form.addRow("Ante", self.bomb_ante)
         self.host_form.addRow("AOF ante", self.aof_ante)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
+        self.host_form.addRow("Allow run twice?", self.aof_run_twice)
         root.addWidget(self.host_box)
 
         self.connect_button = QPushButton("Host Game")
@@ -1137,6 +1162,7 @@ class MainMenuView(QWidget):
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
         self.host_form.setRowVisible(self.aof_multiplier, aof)
+        self.host_form.setRowVisible(self.aof_run_twice, aof)
         self.host_form.setRowVisible(self.big_blind, not allocator and not aof)
         game = self.game.currentData()
         self.seats.setMaximum(10 if game == "nlh" else (6 if game == "helicopter" else 7))
@@ -1159,7 +1185,10 @@ class MainMenuView(QWidget):
             config["bomb_pot_ante"] = self.bomb_ante.value()
         elif config["game"] == "aof":
             config["ante"] = self.aof_ante.value()
-            config["multiplier"] = self.aof_multiplier.value()
+            config["multiplier"] = self.aof_multiplier_group.checkedId()
+            config["allow_run_twice"] = (
+                self.aof_run_twice_group.checkedId() == 1
+            )
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(

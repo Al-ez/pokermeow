@@ -418,6 +418,7 @@ class PokerTableSession:
         bomb_pot_ante=0,
         aof_ante=0,
         aof_multiplier=0,
+        aof_allow_run_twice=False,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -428,6 +429,7 @@ class PokerTableSession:
         self.bomb_pot_ante = bomb_pot_ante
         self.aof_ante = aof_ante
         self.aof_multiplier = aof_multiplier
+        self.aof_allow_run_twice = bool(aof_allow_run_twice)
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -997,7 +999,7 @@ class PokerTableSession:
                     ),
                     "allocator_details": allocator_details,
                     "amount_won": amount_won,
-                    "payouts": dict(amount_won),
+                    "payouts": self._displayed_payouts(result),
                     "hands": revealed_hands,
                     "display_seconds": showdown_delay,
                     "spotlight_cards": spotlight_cards,
@@ -1315,6 +1317,10 @@ class PokerTableSession:
         if (
             self.game.board_category is not BoardCategory.SINGLE_BOARD
             or len(self.game.board) >= 5
+            or (
+                self.game_class is AOFGame
+                and not self.aof_allow_run_twice
+            )
         ):
             return 1
 
@@ -1749,6 +1755,10 @@ class PokerTableSession:
             for name, amount in gross_winnings.items()
         }
 
+    @staticmethod
+    def _displayed_payouts(result):
+        return dict(result.amount_won)
+
     def _poll_control_messages(self, clients, timeout=0):
         connected_clients = []
         for client in clients:
@@ -2173,14 +2183,19 @@ class NetworkPokerServer:
         bomb_pot_ante = 0
         aof_ante = 0
         aof_multiplier = 0
+        aof_allow_run_twice = False
         if game_class is AOFGame:
             aof_ante = parse_money(message.get("ante"), "Ante")
             aof_multiplier = self._parse_int(
                 message.get("multiplier"),
                 "Multiplier",
             )
-            if aof_multiplier < 10:
-                raise RuntimeError("Multiplier must be at least 10")
+            if aof_multiplier not in AOFGame.ALLOWED_MULTIPLIERS:
+                choices = ", ".join(
+                    str(value) for value in AOFGame.ALLOWED_MULTIPLIERS
+                )
+                raise RuntimeError(f"Multiplier must be one of: {choices}")
+            aof_allow_run_twice = message.get("allow_run_twice") is True
             small_blind = Decimal("1")
             big_blind = Decimal("2")
         elif issubclass(game_class, AllocatorGame):
@@ -2209,6 +2224,7 @@ class NetworkPokerServer:
             bomb_pot_ante=bomb_pot_ante,
             aof_ante=aof_ante,
             aof_multiplier=aof_multiplier,
+            aof_allow_run_twice=aof_allow_run_twice,
             shutdown_event=self.shutdown_event,
         )
 

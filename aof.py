@@ -8,6 +8,7 @@ from nlh import ActionResult, NoLimitHoldemGame, ZERO, money
 
 class AOFGame(NoLimitHoldemGame):
     board_category = BoardCategory.SINGLE_BOARD
+    ALLOWED_MULTIPLIERS = (10, 15, 20, 25, 30)
 
     def __init__(
         self,
@@ -20,8 +21,9 @@ class AOFGame(NoLimitHoldemGame):
         multiplier = money(multiplier)
         if ante <= 0:
             raise ValueError("Ante must be greater than zero")
-        if multiplier < 10:
-            raise ValueError("Multiplier must be at least 10")
+        if multiplier not in self.ALLOWED_MULTIPLIERS:
+            choices = ", ".join(str(value) for value in self.ALLOWED_MULTIPLIERS)
+            raise ValueError(f"Multiplier must be one of: {choices}")
         super().__init__(
             player_stacks,
             small_blind=ante,

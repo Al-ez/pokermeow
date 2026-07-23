@@ -61,11 +61,18 @@ def test_aof_fixed_all_in_commits_ante_times_multiplier_less_ante():
     assert alice.all_in
 
 
-def test_aof_is_a_single_board_game_and_multiplier_has_minimum():
+def test_aof_is_a_single_board_game_and_multiplier_is_restricted():
     assert AOFGame.board_category is BoardCategory.SINGLE_BOARD
     try:
         AOFGame({"Alice": 100, "Bob": 100}, ante=3, multiplier=9)
     except ValueError as error:
-        assert "at least 10" in str(error)
+        assert "10, 15, 20, 25, 30" in str(error)
     else:
-        raise AssertionError("Multiplier below 10 should be rejected")
+        raise AssertionError("Unsupported multiplier should be rejected")
+
+    for multiplier in AOFGame.ALLOWED_MULTIPLIERS:
+        assert AOFGame(
+            {"Alice": 100, "Bob": 100},
+            ante=3,
+            multiplier=multiplier,
+        ).multiplier == Decimal(multiplier)

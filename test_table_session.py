@@ -171,6 +171,36 @@ def test_aof_discards_are_collected_from_players_independently():
     assert any(message.get("type") == "aof_discarded" for message in bob.messages)
 
 
+def test_aof_run_twice_is_disabled_by_default():
+    session = PokerTableSession(
+        table_id="AOF1",
+        game_class=AOFGame,
+        game_name="AOF",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        aof_ante=Decimal("3"),
+        aof_multiplier=10,
+    )
+    session.game = AOFGame(
+        {"Alice": 100, "Bob": 100},
+        ante=3,
+        multiplier=10,
+        shuffle=False,
+    )
+    session.game.start_hand()
+
+    assert session._request_run_it_vote([]) == 1
+
+
+def test_displayed_payout_is_the_full_amount_returned_from_the_pot():
+    result = SimpleNamespace(amount_won={"Alice": Decimal("500")})
+
+    assert PokerTableSession._displayed_payouts(result) == {
+        "Alice": Decimal("500"),
+    }
+
+
 if __name__ == "__main__":
     test_table_status_is_broadcast_to_host_when_second_player_sits()
     test_table_loop_starts_when_two_players_are_seated()
@@ -178,4 +208,6 @@ if __name__ == "__main__":
     test_showdown_spotlight_includes_every_player_tied_for_strongest_hand()
     test_chat_is_broadcast_and_only_the_latest_30_messages_are_stored()
     test_aof_discards_are_collected_from_players_independently()
-    print("6 table session tests passed.")
+    test_aof_run_twice_is_disabled_by_default()
+    test_displayed_payout_is_the_full_amount_returned_from_the_pot()
+    print("8 table session tests passed.")
