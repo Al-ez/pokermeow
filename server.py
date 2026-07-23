@@ -1238,7 +1238,13 @@ class PokerTableSession:
             client = self._client_by_name(player.name, seated_clients)
             thread = threading.Thread(
                 target=self._collect_aof_discard,
-                args=(client, player, errors, discard_lock),
+                args=(
+                    client,
+                    player,
+                    seated_clients,
+                    errors,
+                    discard_lock,
+                ),
             )
             thread.start()
             threads.append(thread)
@@ -1254,7 +1260,14 @@ class PokerTableSession:
             "Every player has discarded. AOF decisions started.",
         )
 
-    def _collect_aof_discard(self, client, player, errors, discard_lock):
+    def _collect_aof_discard(
+        self,
+        client,
+        player,
+        seated_clients,
+        errors,
+        discard_lock,
+    ):
         try:
             client.send(
                 {
@@ -1282,6 +1295,11 @@ class PokerTableSession:
                     card_index = int(message.get("card_index"))
                     with discard_lock:
                         self.game.discard(player.name, card_index)
+                    self._broadcast_hand_message(
+                        seated_clients,
+                        f"{player.name} has discarded a card.",
+                    )
+                    self._send_states_to(seated_clients)
                 except (TypeError, ValueError) as error:
                     client.send({"type": "error", "message": str(error)})
                     continue

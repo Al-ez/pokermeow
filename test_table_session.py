@@ -169,6 +169,18 @@ def test_aof_discards_are_collected_from_players_independently():
         for message in alice.messages
     )
     assert any(message.get("type") == "aof_discarded" for message in bob.messages)
+    assert any(
+        message == {
+            "type": "message",
+            "message": "Alice has discarded a card.",
+        }
+        for message in bob.messages
+    )
+    assert any(
+        message.get("type") == "state"
+        and message["state"]["players"]["Alice"]["hand_size"] == 2
+        for message in bob.messages
+    )
 
 
 def test_aof_run_twice_is_disabled_by_default():

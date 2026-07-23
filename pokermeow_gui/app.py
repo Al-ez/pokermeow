@@ -27,14 +27,14 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {
     background: #182235;
     border: 1px solid #3b4a63;
     border-radius: 5px;
-    padding: 7px;
+    padding: 4px 5px;
     selection-background-color: #2563eb;
 }
 QPushButton {
     background: #263449;
     border: 1px solid #475569;
     border-radius: 6px;
-    padding: 8px 14px;
+    padding: 5px 9px;
 }
 QPushButton:hover { background: #334155; }
 QPushButton:disabled { color: #64748b; background: #172033; }

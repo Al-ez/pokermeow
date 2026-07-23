@@ -2,6 +2,7 @@ from html import escape
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QButtonGroup,
@@ -45,6 +46,77 @@ SUIT_SYMBOLS = {
     "hearts": "\u2665",
     "spades": "\u2660",
 }
+
+
+class _ResponsiveTextMixin:
+    _maximum_text_pixels = 14
+    _minimum_text_pixels = 9
+
+    def _fit_text(self, text):
+        available_width = max(1, self.width() - 12)
+        available_height = max(1, self.height() - 6)
+        selected_size = self._minimum_text_pixels
+        for size in range(
+            self._maximum_text_pixels,
+            self._minimum_text_pixels - 1,
+            -1,
+        ):
+            font = QFont(self.font())
+            font.setPixelSize(size)
+            metrics = QFontMetrics(font)
+            if (
+                metrics.horizontalAdvance(str(text)) <= available_width
+                and metrics.height() <= available_height
+            ):
+                selected_size = size
+                break
+        if getattr(self, "_responsive_text_size", None) == selected_size:
+            return
+        self._responsive_text_size = selected_size
+        self.setStyleSheet(
+            f"font-size: {selected_size}px;"
+            "padding: 2px 4px;"
+            "border-width: 1px;"
+            "border-radius: 4px;"
+        )
+
+
+class ResponsiveSpinBox(_ResponsiveTextMixin, QSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.valueChanged.connect(lambda: self._fit_text(self.text()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text(self.text())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_text(self.text())
+
+
+class ResponsiveDoubleSpinBox(_ResponsiveTextMixin, QDoubleSpinBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.valueChanged.connect(lambda: self._fit_text(self.text()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text(self.text())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_text(self.text())
+
+
+class ResponsiveChoiceButton(_ResponsiveTextMixin, QPushButton):
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text(self.text())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_text(self.text())
 
 
 def compact_card_text(card):
@@ -1036,7 +1108,7 @@ class MainMenuView(QWidget):
         connection_box = QGroupBox("Connection")
         self.connection_form = QFormLayout(connection_box)
         self.host = QLineEdit("127.0.0.1")
-        self.port = QSpinBox()
+        self.port = ResponsiveSpinBox()
         self.port.setRange(1, 65535)
         self.port.setValue(PORT)
         self.port.setButtonSymbols(
@@ -1046,7 +1118,7 @@ class MainMenuView(QWidget):
         self.username.setPlaceholderText("Your display name")
         self.table_id = QLineEdit()
         self.table_id.setPlaceholderText("Required when joining, e.g. A1B2")
-        self.buy_in = QDoubleSpinBox()
+        self.buy_in = ResponsiveDoubleSpinBox()
         self.buy_in.setRange(0.01, 1_000_000_000)
         self.buy_in.setDecimals(2)
         self.buy_in.setValue(1000)
@@ -1068,25 +1140,25 @@ class MainMenuView(QWidget):
         self.game.addItem("AOF", "aof")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
-        self.seats = QSpinBox()
+        self.seats = ResponsiveSpinBox()
         self.seats.setRange(2, 10)
         self.seats.setValue(6)
         self.seats.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
-        self.big_blind = QDoubleSpinBox()
+        self.big_blind = ResponsiveDoubleSpinBox()
         self.big_blind.setRange(0.01, 1_000_000)
         self.big_blind.setValue(2)
         self.big_blind.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
-        self.bomb_ante = QSpinBox()
+        self.bomb_ante = ResponsiveSpinBox()
         self.bomb_ante.setRange(1, 1_000_000)
         self.bomb_ante.setValue(10)
         self.bomb_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
-        self.aof_ante = QDoubleSpinBox()
+        self.aof_ante = ResponsiveDoubleSpinBox()
         self.aof_ante.setRange(0.01, 1_000_000)
         self.aof_ante.setValue(3)
         self.aof_ante.setButtonSymbols(
@@ -1100,7 +1172,7 @@ class MainMenuView(QWidget):
         self.aof_multiplier_group.setExclusive(True)
         self.aof_multiplier_buttons = {}
         for multiplier in (10, 15, 20, 25, 30):
-            button = QPushButton(str(multiplier))
+            button = ResponsiveChoiceButton(str(multiplier))
             button.setCheckable(True)
             self.aof_multiplier_group.addButton(button, multiplier)
             self.aof_multiplier_buttons[multiplier] = button
@@ -1113,8 +1185,8 @@ class MainMenuView(QWidget):
         run_twice_layout.setSpacing(6)
         self.aof_run_twice_group = QButtonGroup(self)
         self.aof_run_twice_group.setExclusive(True)
-        self.aof_run_twice_no = QPushButton("No")
-        self.aof_run_twice_yes = QPushButton("Yes")
+        self.aof_run_twice_no = ResponsiveChoiceButton("No")
+        self.aof_run_twice_yes = ResponsiveChoiceButton("Yes")
         for button in (self.aof_run_twice_no, self.aof_run_twice_yes):
             button.setCheckable(True)
             run_twice_layout.addWidget(button)
