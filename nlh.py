@@ -272,6 +272,11 @@ class NoLimitHoldemGame:
 
         return actions
 
+    def amount_to_call(self, player_name: str) -> Decimal:
+        player = self._player_by_name(player_name)
+        outstanding_bet = max(ZERO, self.current_bet - player.current_bet)
+        return min(player.stack, outstanding_bet)
+
     def act(self, player_name: str, action: str, amount=0) -> ActionResult:
         if not self.hand_active:
             raise RuntimeError("No active hand. Call start_hand() first.")
@@ -299,7 +304,7 @@ class NoLimitHoldemGame:
         elif action == "call":
             if to_call <= 0:
                 raise ValueError("Cannot call when there is no bet")
-            committed = player.commit(to_call)
+            committed = player.commit(self.amount_to_call(player_name))
             self.pot += committed
 
         elif action == "bet":

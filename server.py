@@ -1074,7 +1074,7 @@ class PokerTableSession:
         action_prompt = {
             "type": "request_action",
             "legal_actions": legal_actions,
-            "to_call": self.game.current_bet - player.current_bet,
+            "to_call": self.game.amount_to_call(player.name),
             "min_raise": self.game.min_raise,
             "min_raise_to": self.game.current_bet + self.game.min_raise,
             "max_bet": (
