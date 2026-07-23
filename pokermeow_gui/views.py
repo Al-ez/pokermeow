@@ -1231,6 +1231,7 @@ class LobbyView(QWidget):
 class TableView(QWidget):
     action_requested = Signal(str, float)
     run_it_requested = Signal(str)
+    chat_requested = Signal(str)
     leave_requested = Signal()
 
     ACTIONS = ("fold", "check", "call", "bet", "raise", "all_in")
@@ -1267,16 +1268,16 @@ class TableView(QWidget):
         chat_layout = QVBoxLayout(chat_box)
         self.chat = QTextEdit()
         self.chat.setReadOnly(True)
-        self.chat.setPlaceholderText("Server and table messages appear here.")
+        self.chat.document().setMaximumBlockCount(30)
+        self.chat.setPlaceholderText("Table chat appears here.")
         chat_controls = QHBoxLayout()
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Player chat requires server protocol support")
-        self.chat_input.setEnabled(False)
-        send_chat = QPushButton("Send")
-        send_chat.setEnabled(False)
-        send_chat.setToolTip("The current PokerMeow server has no chat message type.")
+        self.chat_input.setPlaceholderText("Type a message")
+        self.send_chat = QPushButton("Send")
+        self.send_chat.clicked.connect(self._send_chat)
+        self.chat_input.returnPressed.connect(self._send_chat)
         chat_controls.addWidget(self.chat_input)
-        chat_controls.addWidget(send_chat)
+        chat_controls.addWidget(self.send_chat)
         chat_layout.addWidget(self.chat)
         chat_layout.addLayout(chat_controls)
         side.addWidget(chat_box, 1)
@@ -1469,6 +1470,24 @@ class TableView(QWidget):
     def append_chat(self, text):
         if text:
             self.chat.append(str(text))
+
+    def set_chat_history(self, messages):
+        self.chat.clear()
+        for message in list(messages)[-30:]:
+            self.append_chat_message(message)
+
+    def append_chat_message(self, message):
+        player = str(message.get("player", "Player"))
+        text = str(message.get("message", ""))
+        if text:
+            self.chat.append(escape(f"{player}: {text}"))
+
+    def _send_chat(self):
+        message = self.chat_input.text().strip()
+        if not message:
+            return
+        self.chat_input.clear()
+        self.chat_requested.emit(message)
 
     def _send_action(self, action, amount=0):
         self.action_requested.emit(action, amount)

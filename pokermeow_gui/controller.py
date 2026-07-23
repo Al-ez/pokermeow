@@ -118,6 +118,12 @@ class ClientController:
         self._send({"type": "run_it_vote", "choice": choice})
         self._emit("run_it_vote_sent", {"choice": choice})
 
+    def submit_chat(self, message):
+        message = str(message).strip()
+        if not message:
+            return
+        self._send({"type": "chat", "message": message[:500]})
+
     def request_leave(self):
         self._send({"type": "leave_table"})
 
@@ -240,6 +246,10 @@ class ClientController:
             self._emit("action_required", dict(message))
         elif message_type == "request_run_it":
             self._emit("run_it_required", dict(message))
+        elif message_type == "chat":
+            self._emit("chat", dict(message))
+        elif message_type == "chat_history":
+            self._emit("chat_history", list(message.get("messages", [])))
         elif message_type == "hand_history":
             self._emit("hand_history", list(message.get("history", [])))
         elif message_type == "request_allocator_allocation":

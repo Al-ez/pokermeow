@@ -53,6 +53,7 @@ class MainWindow(QMainWindow):
         self.pages.table.leave_requested.connect(self._request_leave)
         self.pages.table.action_requested.connect(self._submit_action)
         self.pages.table.run_it_requested.connect(self._submit_run_it_vote)
+        self.pages.table.chat_requested.connect(self._submit_chat)
         self.statusBar().showMessage("Ready")
 
     def closeEvent(self, event):
@@ -146,7 +147,10 @@ class MainWindow(QMainWindow):
                 self.pages.table.start_new_hand()
             else:
                 self.pages.table.append_history(payload)
-            self.pages.table.append_chat(f"Table: {payload}")
+        elif event == "chat":
+            self.pages.table.append_chat_message(payload)
+        elif event == "chat_history":
+            self.pages.table.set_chat_history(payload)
         elif event == "hand_history":
             self.pages.table.set_hand_history(payload)
             self.pages.setCurrentWidget(self.pages.table)
@@ -232,6 +236,12 @@ class MainWindow(QMainWindow):
         except (ConnectionError, OSError, RuntimeError, ValueError) as error:
             self.pages.table.hide_run_it_prompt()
             self.pages.table.append_history(f"Run-it vote failed: {error}")
+
+    def _submit_chat(self, message):
+        try:
+            self.controller.submit_chat(message)
+        except (ConnectionError, OSError, RuntimeError, ValueError) as error:
+            self.statusBar().showMessage(f"Chat failed: {error}", 5000)
 
     def _request_new_name(self, message):
         name, accepted = QInputDialog.getText(

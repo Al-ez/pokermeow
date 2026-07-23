@@ -1,4 +1,5 @@
 import argparse
+from collections import deque
 import select
 import socket
 import random
@@ -429,6 +430,8 @@ class PokerTableSession:
         self.pending_names_lock = threading.Lock()
         self.game = None
         self.current_hand_history = []
+        self.chat_messages = deque(maxlen=30)
+        self.chat_lock = threading.Lock()
         self.dealer_index = 0
         self.shutdown_event = shutdown_event or threading.Event()
 
@@ -482,6 +485,7 @@ class PokerTableSession:
                     "message": f"Reconnected to table {self.table_id}.",
                 }
             )
+            self._send_chat_history(client)
             self._send_reconnect_snapshot(client)
             return
 
@@ -494,6 +498,7 @@ class PokerTableSession:
             with self.all_clients_lock:
                 self.all_clients.append(client)
 
+            self._send_chat_history(client)
             self._place_new_client(client, address)
         finally:
             self._release_pending_name(client.name)
@@ -1123,6 +1128,9 @@ class PokerTableSession:
                     if message and message.get("type") == "cancel_leave":
                         self._handle_cancel_leave_request(client)
                         continue
+                    if message and message.get("type") == "chat":
+                        self._handle_chat_message(client, message)
+                        continue
 
                     if message and message.get("type") == "action":
                         if countdown_started:
@@ -1285,6 +1293,9 @@ class PokerTableSession:
                 if message.get("type") == "cancel_leave":
                     self._handle_cancel_leave_request(client)
                     continue
+                if message.get("type") == "chat":
+                    self._handle_chat_message(client, message)
+                    continue
                 if message.get("type") != "run_it_vote":
                     continue
                 choice = str(message.get("choice", "")).lower()
@@ -1389,6 +1400,9 @@ class PokerTableSession:
                     continue
                 if message and message.get("type") == "cancel_leave":
                     self._handle_cancel_leave_request(client)
+                    continue
+                if message and message.get("type") == "chat":
+                    self._handle_chat_message(client, message)
                     continue
                 if not message:
                     with ready_condition:
@@ -1679,6 +1693,44 @@ class PokerTableSession:
                 self._handle_leave_request(client)
             elif message and message.get("type") == "cancel_leave":
                 self._handle_cancel_leave_request(client)
+            elif message and message.get("type") == "chat":
+                self._handle_chat_message(client, message)
+
+    def _handle_chat_message(self, client, message):
+        text = str(message.get("message", "")).strip()
+        if not text:
+            return
+        chat_message = {
+            "player": client.name,
+            "message": text[:500],
+        }
+        with self.chat_lock:
+            self.chat_messages.append(chat_message)
+        self._broadcast_all({"type": "chat", **chat_message})
+
+    def _send_chat_history(self, client):
+        with self.chat_lock:
+            messages = [dict(message) for message in self.chat_messages]
+        try:
+            client.send(
+                {
+                    "type": "chat_history",
+                    "messages": messages,
+                }
+            )
+        except ConnectionError:
+            client.connected = False
+
+    def _broadcast_all(self, message):
+        with self.all_clients_lock:
+            clients = list(self.all_clients)
+        for client in clients:
+            if not client.connected:
+                continue
+            try:
+                client.send(message)
+            except ConnectionError:
+                client.connected = False
 
     def _handle_leave_request(self, client):
         player = None

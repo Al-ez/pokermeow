@@ -180,6 +180,29 @@ def test_controller_exposes_and_submits_run_it_vote():
     ) in events
 
 
+def test_controller_exposes_chat_history_and_submits_chat():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+    history = [{"player": "Bob", "message": "Hello"}]
+
+    connection.on_message({"type": "chat_history", "messages": history})
+    connection.on_message(
+        {"type": "chat", "player": "Bob", "message": "Welcome"}
+    )
+    controller.submit_chat("Hi everyone")
+
+    assert ("chat_history", history) in events
+    assert (
+        "chat",
+        {"type": "chat", "player": "Bob", "message": "Welcome"},
+    ) in events
+    assert connection.sent[-1] == {
+        "type": "chat",
+        "message": "Hi everyone",
+    }
+
+
 def test_controller_submits_rebuy_or_leave():
     controller, connection = make_controller()
 

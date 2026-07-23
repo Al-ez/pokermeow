@@ -91,9 +91,40 @@ def test_showdown_spotlight_includes_every_player_tied_for_strongest_hand():
     assert spotlight == board + ["J♦", "10♠", "J♣", "10♥"]
 
 
+def test_chat_is_broadcast_and_only_the_latest_30_messages_are_stored():
+    session = make_session()
+    alez = FakeClient("Alez")
+    bob = FakeClient("Bob")
+    session.all_clients.extend([alez, bob])
+
+    for number in range(31):
+        session._handle_chat_message(
+            alez,
+            {"type": "chat", "message": f"Message {number + 1}"},
+        )
+
+    assert len(session.chat_messages) == 30
+    assert session.chat_messages[0] == {
+        "player": "Alez",
+        "message": "Message 2",
+    }
+    assert bob.messages[-1] == {
+        "type": "chat",
+        "player": "Alez",
+        "message": "Message 31",
+    }
+
+    session._send_chat_history(bob)
+    history = bob.messages[-1]
+    assert history["type"] == "chat_history"
+    assert len(history["messages"]) == 30
+    assert history["messages"][0]["message"] == "Message 2"
+
+
 if __name__ == "__main__":
     test_table_status_is_broadcast_to_host_when_second_player_sits()
     test_table_loop_starts_when_two_players_are_seated()
     test_allocator_showdown_timing_distinguishes_uncontested_pots()
     test_showdown_spotlight_includes_every_player_tied_for_strongest_hand()
-    print("4 table session tests passed.")
+    test_chat_is_broadcast_and_only_the_latest_30_messages_are_stored()
+    print("5 table session tests passed.")
