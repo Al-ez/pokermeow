@@ -41,6 +41,9 @@ class MainWindow(QMainWindow):
         self._showdown_timer = QTimer(self)
         self._showdown_timer.setInterval(1000)
         self._showdown_timer.timeout.connect(self._tick_showdown_timer)
+        self._run_it_timer = QTimer(self)
+        self._run_it_timer.setSingleShot(True)
+        self._run_it_timer.timeout.connect(self.pages.table.hide_run_it_prompt)
         self.bridge.event_received.connect(self._handle_event)
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
@@ -49,6 +52,7 @@ class MainWindow(QMainWindow):
         self.pages.lobby.seat_selected.connect(self._select_seat)
         self.pages.table.leave_requested.connect(self._request_leave)
         self.pages.table.action_requested.connect(self._submit_action)
+        self.pages.table.run_it_requested.connect(self._submit_run_it_vote)
         self.statusBar().showMessage("Ready")
 
     def closeEvent(self, event):
@@ -127,6 +131,15 @@ class MainWindow(QMainWindow):
             self.pages.table.set_legal_actions(payload)
         elif event == "action_sent":
             self.pages.table.clear_legal_actions()
+        elif event == "run_it_required":
+            self.pages.setCurrentWidget(self.pages.table)
+            self.pages.table.show_run_it_prompt()
+            self._run_it_timer.start(
+                max(0, int(payload.get("seconds", 5))) * 1000
+            )
+        elif event == "run_it_vote_sent":
+            self._run_it_timer.stop()
+            self.pages.table.hide_run_it_prompt()
         elif event == "message":
             if payload == "New hand started.":
                 self._showdown_timer.stop()
@@ -213,6 +226,13 @@ class MainWindow(QMainWindow):
         self.pages.lobby.set_status(f"Taking seat…")
         self.controller.choose_seat(int(seat_number))
 
+    def _submit_run_it_vote(self, choice):
+        try:
+            self.controller.submit_run_it_vote(choice)
+        except (ConnectionError, OSError, RuntimeError, ValueError) as error:
+            self.pages.table.hide_run_it_prompt()
+            self.pages.table.append_history(f"Run-it vote failed: {error}")
+
     def _request_new_name(self, message):
         name, accepted = QInputDialog.getText(
             self,
@@ -298,6 +318,9 @@ class MainWindow(QMainWindow):
                 result.get("payouts", {}),
             )
         else:
+            runout_boards = result.get("runout_boards")
+            if runout_boards:
+                self.pages.table.show_runout_boards(runout_boards)
             self.pages.table.show_showdown_hands(result.get("hands", []))
             self.pages.table.show_payouts(result.get("payouts", {}))
             spotlight_cards = result.get("spotlight_cards")

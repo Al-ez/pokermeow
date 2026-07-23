@@ -483,6 +483,7 @@ class PokerBetSpot(QLabel):
 
 
 class PokerTableDisplay(QWidget):
+    run_it_choice = Signal(str)
     seat_clicked = Signal(int)
 
     POSITIONS = {
@@ -624,9 +625,63 @@ class PokerTableDisplay(QWidget):
             dealer_badge.setVisible(False)
             self.dealer_widgets[seat_number] = dealer_badge
 
+        self.run_it_prompt = QFrame(self.felt)
+        self.run_it_prompt.setObjectName("runItPrompt")
+        self.run_it_prompt.setStyleSheet(
+            "QFrame#runItPrompt { background: #111827; border: 1px solid #475569;"
+            "border-radius: 10px; }"
+            "QLabel { color: white; font-size: 15px; font-weight: 800; }"
+        )
+        prompt_layout = QVBoxLayout(self.run_it_prompt)
+        prompt_layout.setContentsMargins(10, 8, 10, 8)
+        prompt_layout.setSpacing(6)
+        prompt_title = QLabel("Run it?")
+        prompt_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        prompt_layout.addWidget(prompt_title)
+        prompt_buttons = QHBoxLayout()
+        self.run_it_once = QPushButton("Once")
+        self.run_it_once.setStyleSheet(
+            "background: #b91c1c; color: white; font-weight: 800;"
+        )
+        self.run_it_twice = QPushButton("Twice")
+        self.run_it_twice.setStyleSheet(
+            "background: #15803d; color: white; font-weight: 800;"
+        )
+        self.run_it_once.clicked.connect(
+            lambda: self._choose_run_it("once")
+        )
+        self.run_it_twice.clicked.connect(
+            lambda: self._choose_run_it("twice")
+        )
+        prompt_buttons.addWidget(self.run_it_once)
+        prompt_buttons.addWidget(self.run_it_twice)
+        prompt_layout.addLayout(prompt_buttons)
+        self.run_it_prompt.setFixedSize(180, 90)
+        self.run_it_prompt.hide()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._layout_table(force=True)
+        self._position_run_it_prompt()
+
+    def show_run_it_prompt(self):
+        self._position_run_it_prompt()
+        self.run_it_prompt.show()
+        self.run_it_prompt.raise_()
+
+    def hide_run_it_prompt(self):
+        self.run_it_prompt.hide()
+
+    def _choose_run_it(self, choice):
+        self.hide_run_it_prompt()
+        self.run_it_choice.emit(choice)
+
+    def _position_run_it_prompt(self):
+        margin = 14
+        self.run_it_prompt.move(
+            max(margin, self.felt.width() - self.run_it_prompt.width() - margin),
+            max(margin, self.felt.height() - self.run_it_prompt.height() - margin),
+        )
 
     def set_pickable_seats(self, seats):
         self.pickable_seats = {int(seat) for seat in seats}
@@ -789,6 +844,19 @@ class PokerTableDisplay(QWidget):
             banner += " · " + str(hand_label).replace("_", " ").title()
         self.winning_hand_label.setText(banner)
         self.winning_hand_label.setVisible(True)
+
+    def show_runout_boards(self, boards):
+        if len(boards) != 2:
+            return
+        self.community_cards = []
+        self.board_label.setText(
+            f"<b>Run 1:</b> {cards_html(boards[0])}<br>"
+            f"<b>Run 2:</b> {cards_html(boards[1])}"
+        )
+        self.board_label.setToolTip(
+            f"Run 1: {cards_text(boards[0])} | "
+            f"Run 2: {cards_text(boards[1])}"
+        )
 
     def _visible_seats(self, table):
         if not table:
@@ -1162,6 +1230,7 @@ class LobbyView(QWidget):
 
 class TableView(QWidget):
     action_requested = Signal(str, float)
+    run_it_requested = Signal(str)
     leave_requested = Signal()
 
     ACTIONS = ("fold", "check", "call", "bet", "raise", "all_in")
@@ -1183,6 +1252,7 @@ class TableView(QWidget):
         root.addLayout(top, 0, 0, 1, 2)
 
         self.table_display = PokerTableDisplay(show_game_details=True)
+        self.table_display.run_it_choice.connect(self.run_it_requested)
         root.addWidget(self.table_display, 1, 0)
 
         side = QVBoxLayout()
@@ -1320,8 +1390,17 @@ class TableView(QWidget):
     def spotlight_showdown(self, cards, hand_name=""):
         self.table_display.spotlight_showdown(cards, hand_name)
 
+    def show_runout_boards(self, boards):
+        self.table_display.show_runout_boards(boards)
+
     def show_payouts(self, payouts):
         self.table_display.show_payouts(payouts)
+
+    def show_run_it_prompt(self):
+        self.table_display.show_run_it_prompt()
+
+    def hide_run_it_prompt(self):
+        self.table_display.hide_run_it_prompt()
 
     def show_allocator_stage(self, stage, title, is_strength=False):
         self.table_display.show_allocator_stage(stage, title, is_strength)
@@ -1365,6 +1444,7 @@ class TableView(QWidget):
             self.append_history(item)
 
     def start_new_hand(self):
+        self.hide_run_it_prompt()
         self.history.clear()
         self.append_history("New hand started.")
 
@@ -1380,6 +1460,7 @@ class TableView(QWidget):
         self.chat.clear()
         self.set_leave_pending(False)
         self.clear_legal_actions()
+        self.hide_run_it_prompt()
 
     def set_leave_pending(self, pending):
         self.leave_button.setEnabled(True)

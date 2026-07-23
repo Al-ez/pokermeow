@@ -2,11 +2,14 @@ from itertools import combinations
 from typing import Dict, List, Tuple
 
 from card import Card
+from game_categories import BoardCategory
 from nlh import HandEvaluator, NoLimitHoldemGame
 from pot_limit import PotLimitBettingMixin
 
 
 class PotLimitOmahaGame(PotLimitBettingMixin, NoLimitHoldemGame):
+    board_category = BoardCategory.SINGLE_BOARD
+
     def showdown(self):
         active_players = [player for player in self.players if not player.folded]
 
@@ -67,3 +70,6 @@ class PotLimitOmahaGame(PotLimitBettingMixin, NoLimitHoldemGame):
                     best = score
 
         return best
+
+    def _score_hand(self, hole_cards: List[Card], board: List[Card]):
+        return self._best_plo_hand(hole_cards, board)

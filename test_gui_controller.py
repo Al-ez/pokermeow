@@ -160,6 +160,26 @@ def test_controller_auto_continues_for_legacy_servers():
     }
 
 
+def test_controller_exposes_and_submits_run_it_vote():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+    request = {"type": "request_run_it", "seconds": 5}
+
+    connection.on_message(request)
+    controller.submit_run_it_vote("twice")
+
+    assert ("run_it_required", request) in events
+    assert connection.sent[-1] == {
+        "type": "run_it_vote",
+        "choice": "twice",
+    }
+    assert (
+        "run_it_vote_sent",
+        {"choice": "twice"},
+    ) in events
+
+
 def test_controller_submits_rebuy_or_leave():
     controller, connection = make_controller()
 

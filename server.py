@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from allocator import AllocatorGame
 from helicopter import HelicopterGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
+from game_categories import BoardCategory
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
 from nlh import HandEvaluator, NoLimitHoldemGame
 from plo import PotLimitOmahaGame
@@ -43,6 +44,17 @@ def parse_money(value, field_name, allow_zero=False):
         raise RuntimeError(f"{field_name} must be greater than zero")
 
     return amount
+
+
+def run_count_for_votes(player_names, votes):
+    player_names = set(player_names)
+    if (
+        player_names
+        and set(votes) == player_names
+        and all(votes[name] == "twice" for name in player_names)
+    ):
+        return 2
+    return 1
 
 
 @dataclass
@@ -752,6 +764,7 @@ class PokerTableSession:
         self.game.dealer_index = self.dealer_index
 
         try:
+            runout_boards = None
             self.game.start_hand()
             self._broadcast_hand_message(seated_clients, "New hand started.")
             self._send_states_to(seated_clients)
@@ -760,7 +773,7 @@ class PokerTableSession:
                 self._run_betting_round(seated_clients)
 
             if len(self.game.active_players()) > 1 and self._should_skip_to_showdown():
-                self._deal_remaining_board(seated_clients)
+                runout_boards = self._deal_all_in_runout(seated_clients)
             elif len(self.game.active_players()) > 1:
                 self.game.deal_flop()
                 self._broadcast_hand_message(
@@ -772,7 +785,7 @@ class PokerTableSession:
 
             if len(self.game.active_players()) > 1 and len(self.game.board) == 3:
                 if self._should_skip_to_showdown():
-                    self._deal_remaining_board(seated_clients)
+                    runout_boards = self._deal_all_in_runout(seated_clients)
                 else:
                     self.game.deal_turn()
                     self._broadcast_hand_message(
@@ -784,7 +797,7 @@ class PokerTableSession:
 
             if len(self.game.active_players()) > 1 and len(self.game.board) == 4:
                 if self._should_skip_to_showdown():
-                    self._deal_remaining_board(seated_clients)
+                    runout_boards = self._deal_all_in_runout(seated_clients)
                 else:
                     self.game.deal_river()
                     self._broadcast_hand_message(
@@ -800,7 +813,10 @@ class PokerTableSession:
             if issubclass(self.game_class, AllocatorGame) and len(self.game.active_players()) > 1:
                 self._request_allocator_allocations(seated_clients)
 
-            result = self.game.showdown()
+            if runout_boards and len(runout_boards) == 2:
+                result = self.game.showdown_boards(runout_boards)
+            else:
+                result = self.game.showdown()
             showdown_scores = None
             if result.hand_name == "uncontested":
                 player_hand_names = {}
@@ -821,6 +837,28 @@ class PokerTableSession:
                     for winner in result.winners
                 }
                 allocator_details = self._allocator_showdown_details()
+            elif runout_boards and len(runout_boards) == 2:
+                board_scores = [
+                    {
+                        player.name: self.game._score_hand(player.hand, board)
+                        for player in self.game.players
+                        if not player.folded
+                    }
+                    for board in runout_boards
+                ]
+                player_hand_names = {
+                    player.name: " / ".join(
+                        scores[player.name][3]
+                        for scores in board_scores
+                    )
+                    for player in self.game.players
+                    if not player.folded
+                }
+                winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
+                }
+                allocator_details = None
             elif self.game_class is PotLimitOmahaGame and len(self.game.board) == 5:
                 showdown_scores = {
                     player.name: self.game._best_plo_hand(
@@ -905,6 +943,7 @@ class PokerTableSession:
             if (
                 result.hand_name != "uncontested"
                 and self.game_class in {NoLimitHoldemGame, PotLimitOmahaGame}
+                and showdown_scores
             ):
                 spotlight_cards = self._spotlight_cards_for_scores(showdown_scores)
             self._broadcast_to(
@@ -916,6 +955,14 @@ class PokerTableSession:
                     "winner_hand_names": winner_hand_names,
                     "player_hand_names": player_hand_names,
                     "board": [str(card) for card in self.game.board],
+                    "runout_boards": (
+                        [
+                            [str(card) for card in board]
+                            for board in runout_boards
+                        ]
+                        if runout_boards and len(runout_boards) == 2
+                        else None
+                    ),
                     "top_board": (
                         [str(card) for card in self.game.top_board]
                         if hasattr(self.game, "top_board")
@@ -1148,6 +1195,121 @@ class PokerTableSession:
 
     def _request_allocator_allocations(self, seated_clients):
         self._send_states_to(seated_clients)
+
+    def _deal_all_in_runout(self, seated_clients):
+        run_count = self._request_run_it_vote(seated_clients)
+        starting_board = list(self.game.board)
+        boards = []
+
+        for run_number in range(run_count):
+            self.game.board = list(starting_board)
+            self._deal_remaining_board(seated_clients)
+            boards.append(list(self.game.board))
+            if run_count == 2:
+                self._broadcast_hand_message(
+                    seated_clients,
+                    f"Run {run_number + 1}: "
+                    + " ".join(str(card) for card in self.game.board),
+                )
+
+        self.game.board = list(boards[0])
+        self._send_states_to(seated_clients)
+        return boards
+
+    def _request_run_it_vote(self, seated_clients):
+        if (
+            self.game.board_category is not BoardCategory.SINGLE_BOARD
+            or len(self.game.board) >= 5
+        ):
+            return 1
+
+        active_names = {
+            player.name
+            for player in self.game.active_players()
+        }
+        clients = [
+            self.table.client_by_name(name)
+            for name in active_names
+        ]
+        connected_clients = [
+            client
+            for client in clients
+            if client is not None and client.connected
+        ]
+        votes = {}
+        deadline = time.monotonic() + TIMEOUTS["run_it_vote"]
+        prompt = {
+            "type": "request_run_it",
+            "seconds": TIMEOUTS["run_it_vote"],
+        }
+        self._broadcast_hand_message(
+            seated_clients,
+            "All-in. Players have 5 seconds to choose run it once or twice.",
+        )
+        self._broadcast_to(connected_clients, prompt)
+
+        while not self.shutdown_event.is_set() and time.monotonic() < deadline:
+            if len(votes) == len(active_names):
+                break
+            readable_clients = [
+                client
+                for client in connected_clients
+                if client.name not in votes and client.connected
+            ]
+            if not readable_clients:
+                break
+            timeout = min(0.1, max(0, deadline - time.monotonic()))
+            readable, _, _ = select.select(
+                [client.socket for client in readable_clients],
+                [],
+                [],
+                timeout,
+            )
+            for socket_obj in readable:
+                client = next(
+                    item for item in readable_clients
+                    if item.socket is socket_obj
+                )
+                try:
+                    message = client.recv()
+                except (ConnectionError, OSError):
+                    client.connected = False
+                    continue
+                if not message:
+                    client.connected = False
+                    continue
+                if message.get("type") == "leave_table":
+                    self._handle_leave_request(client)
+                    votes[client.name] = "once"
+                    continue
+                if message.get("type") == "cancel_leave":
+                    self._handle_cancel_leave_request(client)
+                    continue
+                if message.get("type") != "run_it_vote":
+                    continue
+                choice = str(message.get("choice", "")).lower()
+                if choice not in {"once", "twice"}:
+                    continue
+                votes[client.name] = choice
+                if choice == "once":
+                    self._broadcast_hand_message(
+                        seated_clients,
+                        f"{client.name} chose once. Running it once.",
+                    )
+                    return 1
+
+        if run_count_for_votes(active_names, votes) == 2:
+            self._broadcast_hand_message(
+                seated_clients,
+                "Everyone chose twice. Running it twice.",
+            )
+            return 2
+
+        self._broadcast_hand_message(
+            seated_clients,
+            "Run-it vote expired without unanimous twice. Running it once.",
+        )
+        return 1
         self._broadcast_hand_message(
             seated_clients,
             "Allocation phase started. Waiting for all players.",

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 from card import Card
 from deck import Deck
+from game_categories import BoardCategory
 from player import Player
 
 
@@ -190,6 +191,8 @@ class HandEvaluator:
 
 
 class NoLimitHoldemGame:
+    board_category = BoardCategory.SINGLE_BOARD
+
     def __init__(
         self,
         player_stacks: Dict[str, Decimal],
@@ -393,9 +396,10 @@ class NoLimitHoldemGame:
         if len(self.board) != 5:
             raise RuntimeError("Showdown requires a complete five-card board")
 
-        scores = {}
-        for player in active_players:
-            scores[player.name] = HandEvaluator.best_hand(player.hand + self.board)
+        scores = {
+            player.name: self._score_hand(player.hand, self.board)
+            for player in active_players
+        }
 
         amount_won: Dict[str, Decimal] = {}
         winners_by_pot = self._award_showdown_pots(active_players, scores, amount_won)
@@ -416,6 +420,53 @@ class NoLimitHoldemGame:
             winning_cards=list(first_winner_score[2]),
             amount_won=amount_won,
         )
+
+    def showdown_boards(self, boards: List[List[Card]]) -> HandResult:
+        """Settle each side pot equally across multiple complete boards."""
+        if not boards:
+            raise ValueError("At least one board is required")
+        if any(len(board) != 5 for board in boards):
+            raise RuntimeError("Showdown requires complete five-card boards")
+
+        active_players = [player for player in self.players if not player.folded]
+        if len(active_players) <= 1:
+            return self.showdown()
+
+        amount_won: Dict[str, Decimal] = {}
+        winners_by_pot = []
+        board_scores = []
+        board_share = Decimal(1) / Decimal(len(boards))
+        for board in boards:
+            scores = {
+                player.name: self._score_hand(player.hand, board)
+                for player in active_players
+            }
+            board_scores.append(scores)
+            winners_by_pot.extend(
+                self._award_showdown_pots(
+                    active_players,
+                    scores,
+                    amount_won,
+                    pot_multiplier=board_share,
+                )
+            )
+
+        all_scores = [
+            scores[player.name]
+            for scores in board_scores
+            for player in active_players
+        ]
+        best_score = max(all_scores, key=lambda score: score[:2])
+        self.hand_active = False
+        return HandResult(
+            winners=list(dict.fromkeys(winners_by_pot)),
+            hand_name=best_score[3],
+            winning_cards=list(best_score[2]),
+            amount_won=amount_won,
+        )
+
+    def _score_hand(self, hole_cards: List[Card], board: List[Card]):
+        return HandEvaluator.best_hand(hole_cards + board)
 
     def advance_dealer(self) -> None:
         self.dealer_index = (self.dealer_index + 1) % len(self.players)
@@ -447,6 +498,7 @@ class NoLimitHoldemGame:
         scores: Dict[str, Tuple[int, List[int], List[Card], str]],
         amount_won: Dict[str, Decimal],
         score_key=None,
+        pot_multiplier=Decimal(1),
     ) -> List[str]:
         if score_key is None:
             score_key = lambda score: score[:2]
@@ -467,7 +519,11 @@ class NoLimitHoldemGame:
                 for player in self.players
                 if player.total_committed >= level
             ]
-            pot_amount = (level - previous_level) * len(contributors)
+            pot_amount = (
+                (level - previous_level)
+                * len(contributors)
+                * pot_multiplier
+            )
             previous_level = level
 
             if pot_amount <= 0:

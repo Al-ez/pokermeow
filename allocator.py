@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 from card import Card
 from deck import Deck
+from game_categories import BoardCategory
 from nlh import HandEvaluator, HandResult, NoLimitHoldemGame, RANK_VALUES, ZERO
 from pot_limit import PotLimitBettingMixin
 
@@ -31,6 +32,8 @@ class Allocation:
 
 
 class AllocatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
+    board_category = BoardCategory.DOUBLE_BOARD
+
     def __init__(
         self,
         player_stacks: Dict[str, int],

@@ -111,6 +111,13 @@ class ClientController:
     def submit_continue(self, wants_to_continue):
         self._send({"type": "continue", "continue": bool(wants_to_continue)})
 
+    def submit_run_it_vote(self, choice):
+        choice = str(choice).lower()
+        if choice not in {"once", "twice"}:
+            raise ValueError("Run-it choice must be once or twice")
+        self._send({"type": "run_it_vote", "choice": choice})
+        self._emit("run_it_vote_sent", {"choice": choice})
+
     def request_leave(self):
         self._send({"type": "leave_table"})
 
@@ -231,6 +238,8 @@ class ClientController:
             self._emit("state", dict(message))
         elif message_type == "request_action":
             self._emit("action_required", dict(message))
+        elif message_type == "request_run_it":
+            self._emit("run_it_required", dict(message))
         elif message_type == "hand_history":
             self._emit("hand_history", list(message.get("history", [])))
         elif message_type == "request_allocator_allocation":
