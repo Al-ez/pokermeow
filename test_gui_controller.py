@@ -203,6 +203,27 @@ def test_controller_exposes_chat_history_and_submits_chat():
     }
 
 
+def test_controller_exposes_and_submits_aof_discard():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+    request = {
+        "type": "request_aof_discard",
+        "hand": ["A♠", "K♥", "Q♣"],
+    }
+
+    connection.on_message(request)
+    controller.submit_aof_discard(1)
+    connection.on_message({"type": "aof_discarded"})
+
+    assert ("aof_discard_required", request) in events
+    assert connection.sent[-1] == {
+        "type": "aof_discard",
+        "card_index": 1,
+    }
+    assert ("aof_discarded", {}) in events
+
+
 def test_controller_submits_rebuy_or_leave():
     controller, connection = make_controller()
 

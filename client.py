@@ -296,7 +296,10 @@ def ask_positive_int(prompt, default=None):
 
 def ask_table_config():
     while True:
-        game_choice = prompt_input("Choose game: [1] NLH  [2] PLO  [3] Allocator  [4] Helicopter: ").strip()
+        game_choice = prompt_input(
+            "Choose game: [1] NLH  [2] PLO  [3] Allocator "
+            "[4] Helicopter  [5] AOF: "
+        ).strip()
         if game_choice == "1":
             game = "nlh"
             break
@@ -309,7 +312,10 @@ def ask_table_config():
         if game_choice == "4":
             game = "helicopter"
             break
-        print("Please choose 1, 2, 3, or 4.")
+        if game_choice == "5":
+            game = "aof"
+            break
+        print("Please choose 1, 2, 3, 4, or 5.")
 
     seat_cap = 10 if game == "nlh" else (6 if game == "helicopter" else 7)
     max_seats = ask_positive_int(
@@ -331,6 +337,13 @@ def ask_table_config():
 
     if game in {"allocator", "helicopter"}:
         config["bomb_pot_ante"] = ask_positive_int("Bomb pot ante per player [10]: ", default=10)
+    elif game == "aof":
+        config["ante"] = ask_positive_int("Ante per player [3]: ", default=3)
+        multiplier = ask_positive_int("Multiplier [10]: ", default=10)
+        while multiplier < 10:
+            print("Multiplier must be at least 10.")
+            multiplier = ask_positive_int("Multiplier [10]: ", default=10)
+        config["multiplier"] = multiplier
     else:
         config["big_blind"] = ask_blinds()
 
@@ -635,6 +648,26 @@ class PokerClient:
                     "top": top,
                     "bottom": bottom,
                     "hand": hand,
+                },
+            )
+
+        elif message_type == "request_aof_discard":
+            print("\nChoose one card to discard:")
+            show_numbered_cards(message["hand"])
+            while True:
+                try:
+                    card_index = int(prompt_input("Discard card number: ")) - 1
+                except ValueError:
+                    print("Please enter a card number.")
+                    continue
+                if 0 <= card_index < len(message["hand"]):
+                    break
+                print("Choose one of the displayed cards.")
+            send_json(
+                file_obj,
+                {
+                    "type": "aof_discard",
+                    "card_index": card_index,
                 },
             )
 

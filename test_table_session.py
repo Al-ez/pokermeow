@@ -3,6 +3,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from allocator import AllocatorGame
+from aof import AOFGame
 from server import PokerTableSession
 
 
@@ -15,6 +16,15 @@ class FakeClient:
 
     def send(self, message):
         self.messages.append(message)
+
+
+class RespondingClient(FakeClient):
+    def __init__(self, name, responses):
+        super().__init__(name)
+        self.responses = list(responses)
+
+    def recv(self):
+        return self.responses.pop(0) if self.responses else None
 
 
 def make_session(shutdown_event=None):
@@ -121,10 +131,51 @@ def test_chat_is_broadcast_and_only_the_latest_30_messages_are_stored():
     assert history["messages"][0]["message"] == "Message 2"
 
 
+def test_aof_discards_are_collected_from_players_independently():
+    session = PokerTableSession(
+        table_id="AOF1",
+        game_class=AOFGame,
+        game_name="AOF",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        aof_ante=Decimal("3"),
+        aof_multiplier=10,
+    )
+    alice = RespondingClient(
+        "Alice",
+        [{"type": "aof_discard", "card_index": 0}],
+    )
+    bob = RespondingClient(
+        "Bob",
+        [{"type": "aof_discard", "card_index": 2}],
+    )
+    session.table.reserve_or_seat_client(alice, 1)
+    session.table.reserve_or_seat_client(bob, 2)
+    session.game = AOFGame(
+        {"Alice": 100, "Bob": 100},
+        ante=3,
+        multiplier=10,
+        shuffle=False,
+    )
+    session.game.start_hand()
+
+    session._request_aof_discards([alice, bob])
+
+    assert session.game.discarded_players == {"Alice", "Bob"}
+    assert all(len(player.hand) == 2 for player in session.game.players)
+    assert any(
+        message.get("type") == "request_aof_discard"
+        for message in alice.messages
+    )
+    assert any(message.get("type") == "aof_discarded" for message in bob.messages)
+
+
 if __name__ == "__main__":
     test_table_status_is_broadcast_to_host_when_second_player_sits()
     test_table_loop_starts_when_two_players_are_seated()
     test_allocator_showdown_timing_distinguishes_uncontested_pots()
     test_showdown_spotlight_includes_every_player_tied_for_strongest_hand()
     test_chat_is_broadcast_and_only_the_latest_30_messages_are_stored()
-    print("5 table session tests passed.")
+    test_aof_discards_are_collected_from_players_independently()
+    print("6 table session tests passed.")

@@ -1064,6 +1064,7 @@ class MainMenuView(QWidget):
         self.game = QComboBox()
         self.game.addItem("No-Limit Texas Hold'em", "nlh")
         self.game.addItem("Pot-Limit Omaha", "plo")
+        self.game.addItem("AOF", "aof")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.seats = QSpinBox()
@@ -1084,10 +1085,24 @@ class MainMenuView(QWidget):
         self.bomb_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
+        self.aof_ante = QDoubleSpinBox()
+        self.aof_ante.setRange(0.01, 1_000_000)
+        self.aof_ante.setValue(3)
+        self.aof_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.aof_multiplier = QSpinBox()
+        self.aof_multiplier.setRange(10, 1_000_000)
+        self.aof_multiplier.setValue(10)
+        self.aof_multiplier.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         self.host_form.addRow("Game", self.game)
         self.host_form.addRow("Seats", self.seats)
         self.host_form.addRow("Big blind", self.big_blind)
         self.host_form.addRow("Ante", self.bomb_ante)
+        self.host_form.addRow("AOF ante", self.aof_ante)
+        self.host_form.addRow("Multiplier", self.aof_multiplier)
         root.addWidget(self.host_box)
 
         self.connect_button = QPushButton("Host Game")
@@ -1118,8 +1133,11 @@ class MainMenuView(QWidget):
 
     def _game_changed(self):
         allocator = self.game.currentData() in {"allocator", "helicopter"}
+        aof = self.game.currentData() == "aof"
         self.host_form.setRowVisible(self.bomb_ante, allocator)
-        self.host_form.setRowVisible(self.big_blind, not allocator)
+        self.host_form.setRowVisible(self.aof_ante, aof)
+        self.host_form.setRowVisible(self.aof_multiplier, aof)
+        self.host_form.setRowVisible(self.big_blind, not allocator and not aof)
         game = self.game.currentData()
         self.seats.setMaximum(10 if game == "nlh" else (6 if game == "helicopter" else 7))
 
@@ -1139,6 +1157,9 @@ class MainMenuView(QWidget):
         }
         if config["game"] in {"allocator", "helicopter"}:
             config["bomb_pot_ante"] = self.bomb_ante.value()
+        elif config["game"] == "aof":
+            config["ante"] = self.aof_ante.value()
+            config["multiplier"] = self.aof_multiplier.value()
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(
@@ -1422,7 +1443,19 @@ class TableView(QWidget):
         self.action_buttons["call"].setText(
             f"Call {call_text}" if "call" in legal else "Call"
         )
-        self.turn.setText(f"Your turn \u00b7 call {call_text}")
+        fixed_all_in = request.get("fixed_all_in_amount")
+        self.action_buttons["all_in"].setText(
+            f"All In {display_amount(fixed_all_in)}"
+            if fixed_all_in is not None and "all_in" in legal
+            else "All In"
+        )
+        if fixed_all_in is not None and "all_in" in legal:
+            self.turn.setText(
+                f"Your turn \u00b7 fixed all in "
+                f"{display_amount(fixed_all_in)}"
+            )
+        else:
+            self.turn.setText(f"Your turn \u00b7 call {call_text}")
         self.turn.setObjectName("turnActive")
         self.turn.style().unpolish(self.turn)
         self.turn.style().polish(self.turn)
@@ -1431,6 +1464,7 @@ class TableView(QWidget):
         for button in self.action_buttons.values():
             button.setEnabled(False)
         self.action_buttons["call"].setText("Call")
+        self.action_buttons["all_in"].setText("All In")
         self.action_request = {}
         self._close_sizing()
         self.turn.setText("Waiting for another player")

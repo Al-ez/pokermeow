@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from allocator import AllocatorGame
+from aof import AOFGame
 from helicopter import HelicopterGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from game_categories import BoardCategory
@@ -415,6 +416,8 @@ class PokerTableSession:
         big_blind,
         max_seats,
         bomb_pot_ante=0,
+        aof_ante=0,
+        aof_multiplier=0,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -423,6 +426,8 @@ class PokerTableSession:
         self.small_blind = small_blind
         self.big_blind = big_blind
         self.bomb_pot_ante = bomb_pot_ante
+        self.aof_ante = aof_ante
+        self.aof_multiplier = aof_multiplier
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -440,6 +445,8 @@ class PokerTableSession:
         print(f"Game: {self.game_name}")
         if issubclass(self.game_class, AllocatorGame):
             print(f"Bomb pot ante: {self.bomb_pot_ante}")
+        elif self.game_class is AOFGame:
+            print(f"Ante: {self.aof_ante}; multiplier: {self.aof_multiplier}")
         else:
             print(f"Blinds: {self.small_blind}/{self.big_blind}")
         print(f"Table has {self.table.max_seats} seats.")
@@ -750,7 +757,14 @@ class PokerTableSession:
         seated_clients = self.table.seated_clients()
         player_stacks = self.table.seated_player_stacks()
 
-        if issubclass(self.game_class, AllocatorGame):
+        if self.game_class is AOFGame:
+            self.game = self.game_class(
+                player_stacks,
+                ante=self.aof_ante,
+                multiplier=self.aof_multiplier,
+                shuffle=True,
+            )
+        elif issubclass(self.game_class, AllocatorGame):
             self.game = self.game_class(
                 player_stacks,
                 small_blind=1,
@@ -773,6 +787,9 @@ class PokerTableSession:
             self.game.start_hand()
             self._broadcast_hand_message(seated_clients, "New hand started.")
             self._send_states_to(seated_clients)
+
+            if self.game_class is AOFGame:
+                self._request_aof_discards(seated_clients)
 
             if not issubclass(self.game_class, AllocatorGame):
                 self._run_betting_round(seated_clients)
@@ -980,7 +997,7 @@ class PokerTableSession:
                     ),
                     "allocator_details": allocator_details,
                     "amount_won": amount_won,
-                    "payouts": dict(result.amount_won),
+                    "payouts": dict(amount_won),
                     "hands": revealed_hands,
                     "display_seconds": showdown_delay,
                     "spotlight_cards": spotlight_cards,
@@ -1085,6 +1102,11 @@ class PokerTableSession:
             "max_raise_to": (
                 self.game.max_raise_total(player.name)
                 if hasattr(self.game, "max_raise_total")
+                else None
+            ),
+            "fixed_all_in_amount": (
+                self.game.fixed_all_in_amount(player.name)
+                if self.game_class is AOFGame
                 else None
             ),
         }
@@ -1200,6 +1222,71 @@ class PokerTableSession:
             )
 
         self._send_states_to(seated_clients)
+
+    def _request_aof_discards(self, seated_clients):
+        self._broadcast_hand_message(
+            seated_clients,
+            "AOF discard phase started. Waiting for every player.",
+        )
+        errors = []
+        threads = []
+        discard_lock = threading.Lock()
+
+        for player in self.game.active_players():
+            client = self._client_by_name(player.name, seated_clients)
+            thread = threading.Thread(
+                target=self._collect_aof_discard,
+                args=(client, player, errors, discard_lock),
+            )
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+        if errors:
+            raise RuntimeError(errors[0])
+        self._send_states_to(seated_clients)
+        self._broadcast_hand_message(
+            seated_clients,
+            "Every player has discarded. AOF decisions started.",
+        )
+
+    def _collect_aof_discard(self, client, player, errors, discard_lock):
+        try:
+            client.send(
+                {
+                    "type": "request_aof_discard",
+                    "hand": [str(card) for card in player.hand],
+                }
+            )
+            while not self.shutdown_event.is_set():
+                message = client.recv()
+                if not message:
+                    errors.append(f"{player.name} disconnected during AOF discard")
+                    return
+                if message.get("type") == "chat":
+                    self._handle_chat_message(client, message)
+                    continue
+                if message.get("type") == "leave_table":
+                    self._handle_leave_request(client)
+                    continue
+                if message.get("type") != "aof_discard":
+                    client.send(
+                        {"type": "error", "message": "Choose one card to discard."}
+                    )
+                    continue
+                try:
+                    card_index = int(message.get("card_index"))
+                    with discard_lock:
+                        self.game.discard(player.name, card_index)
+                except (TypeError, ValueError) as error:
+                    client.send({"type": "error", "message": str(error)})
+                    continue
+                client.send({"type": "aof_discarded"})
+                return
+        except (ConnectionError, OSError) as error:
+            errors.append(f"{player.name} disconnected during AOF discard: {error}")
 
     def _request_allocator_allocations(self, seated_clients):
         self._send_states_to(seated_clients)
@@ -2061,6 +2148,9 @@ class NetworkPokerServer:
         if game_choice == "plo":
             game_class = PotLimitOmahaGame
             game_name = "Pot-Limit Omaha"
+        elif game_choice == "aof":
+            game_class = AOFGame
+            game_name = "AOF"
         elif game_choice == "allocator":
             game_class = AllocatorGame
             game_name = "Allocator"
@@ -2072,12 +2162,28 @@ class NetworkPokerServer:
             game_name = "No-Limit Texas Hold'em"
 
         max_seats = self._parse_int(message.get("max_seats"), "Number of seats")
-        seat_cap = 10 if game_class is NoLimitHoldemGame else (6 if game_class is HelicopterGame else 7)
+        seat_cap = (
+            10
+            if game_class is NoLimitHoldemGame
+            else (6 if game_class is HelicopterGame else 7)
+        )
         if max_seats < 2 or max_seats > seat_cap:
             raise RuntimeError(f"Number of seats must be between 2 and {seat_cap}")
 
         bomb_pot_ante = 0
-        if issubclass(game_class, AllocatorGame):
+        aof_ante = 0
+        aof_multiplier = 0
+        if game_class is AOFGame:
+            aof_ante = parse_money(message.get("ante"), "Ante")
+            aof_multiplier = self._parse_int(
+                message.get("multiplier"),
+                "Multiplier",
+            )
+            if aof_multiplier < 10:
+                raise RuntimeError("Multiplier must be at least 10")
+            small_blind = Decimal("1")
+            big_blind = Decimal("2")
+        elif issubclass(game_class, AllocatorGame):
             small_blind = Decimal("1")
             big_blind = Decimal("2")
             bomb_pot_ante = self._parse_int(
@@ -2101,6 +2207,8 @@ class NetworkPokerServer:
             big_blind=big_blind,
             max_seats=max_seats,
             bomb_pot_ante=bomb_pot_ante,
+            aof_ante=aof_ante,
+            aof_multiplier=aof_multiplier,
             shutdown_event=self.shutdown_event,
         )
 

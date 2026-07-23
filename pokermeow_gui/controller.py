@@ -124,6 +124,14 @@ class ClientController:
             return
         self._send({"type": "chat", "message": message[:500]})
 
+    def submit_aof_discard(self, card_index):
+        self._send(
+            {
+                "type": "aof_discard",
+                "card_index": int(card_index),
+            }
+        )
+
     def request_leave(self):
         self._send({"type": "leave_table"})
 
@@ -250,6 +258,10 @@ class ClientController:
             self._emit("chat", dict(message))
         elif message_type == "chat_history":
             self._emit("chat_history", list(message.get("messages", [])))
+        elif message_type == "request_aof_discard":
+            self._emit("aof_discard_required", dict(message))
+        elif message_type == "aof_discarded":
+            self._emit("aof_discarded", {})
         elif message_type == "hand_history":
             self._emit("hand_history", list(message.get("history", [])))
         elif message_type == "request_allocator_allocation":

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from .controller import ClientController
 from .allocator_dialog import AllocatorDialog
+from .aof_dialog import AOFDiscardDialog
 from .views import PokerStack
 
 
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
         self._leave_pending = False
         self._rebuy_dialog = None
         self._allocator_dialog = None
+        self._aof_dialog = None
         self._showdown_seconds = 0
         self._showdown_timer = QTimer(self)
         self._showdown_timer.setInterval(1000)
@@ -68,6 +70,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not connect", str(error))
 
     def _leave(self):
+        if self._aof_dialog is not None:
+            self._aof_dialog.accept()
+            self._aof_dialog = None
         self.controller.disconnect()
         self._leave_pending = False
         self.pages.table.reset_session()
@@ -151,6 +156,12 @@ class MainWindow(QMainWindow):
             self.pages.table.append_chat_message(payload)
         elif event == "chat_history":
             self.pages.table.set_chat_history(payload)
+        elif event == "aof_discard_required":
+            self._request_aof_discard(payload)
+        elif event == "aof_discarded":
+            if self._aof_dialog is not None:
+                self._aof_dialog.accept()
+                self._aof_dialog = None
         elif event == "hand_history":
             self.pages.table.set_hand_history(payload)
             self.pages.setCurrentWidget(self.pages.table)
@@ -242,6 +253,14 @@ class MainWindow(QMainWindow):
             self.controller.submit_chat(message)
         except (ConnectionError, OSError, RuntimeError, ValueError) as error:
             self.statusBar().showMessage(f"Chat failed: {error}", 5000)
+
+    def _request_aof_discard(self, payload):
+        if self._aof_dialog is not None:
+            self._aof_dialog.accept()
+        dialog = AOFDiscardDialog(payload.get("hand", []), self)
+        dialog.discarded.connect(self.controller.submit_aof_discard)
+        self._aof_dialog = dialog
+        dialog.show()
 
     def _request_new_name(self, message):
         name, accepted = QInputDialog.getText(
