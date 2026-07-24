@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 from allocator import AllocatorGame
 from aof import AOFGame
+from helicopter import HelicopterGame
+from nlh import NoLimitHoldemGame
+from plo import PotLimitOmahaGame
 from server import PokerTableSession
 from pof import PotOrFoldGame
 
@@ -283,6 +286,81 @@ def test_displayed_payout_is_the_full_amount_returned_from_the_pot():
 
     assert PokerTableSession._displayed_payouts(result) == {
         "Alice": Decimal("500"),
+    }
+
+
+def test_minimum_buy_in_is_fifty_big_blinds_for_blind_games():
+    for game_class in (NoLimitHoldemGame, PotLimitOmahaGame):
+        session = PokerTableSession(
+            table_id="BLND",
+            game_class=game_class,
+            game_name="Blind game",
+            small_blind=Decimal("2"),
+            big_blind=Decimal("4"),
+            max_seats=2,
+        )
+
+        assert session.minimum_buy_in() == Decimal("200")
+
+
+def test_minimum_buy_in_is_fifty_antes_for_ante_games():
+    configurations = (
+        (AllocatorGame, {"bomb_pot_ante": Decimal("3")}),
+        (HelicopterGame, {"bomb_pot_ante": Decimal("3")}),
+        (
+            AOFGame,
+            {
+                "aof_ante": Decimal("3"),
+                "aof_multiplier": 10,
+            },
+        ),
+        (
+            PotOrFoldGame,
+            {
+                "pof_ante": Decimal("3"),
+                "pof_hole_cards": 6,
+            },
+        ),
+    )
+    for game_class, options in configurations:
+        session = PokerTableSession(
+            table_id="ANTE",
+            game_class=game_class,
+            game_name="Ante game",
+            small_blind=Decimal("1"),
+            big_blind=Decimal("2"),
+            max_seats=2,
+            **options,
+        )
+
+        assert session.minimum_buy_in() == Decimal("150")
+
+
+def test_server_rejects_buy_in_below_the_table_minimum():
+    session = PokerTableSession(
+        table_id="TEST",
+        game_class=NoLimitHoldemGame,
+        game_name="NLH",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+    )
+    client = RespondingClient(
+        "Alice",
+        [{"type": "buy_in", "amount": "99"}],
+    )
+
+    try:
+        session._request_buy_in(client)
+    except RuntimeError as error:
+        assert str(error) == "Buy-in must be at least 100"
+    else:
+        raise AssertionError("Below-minimum buy-in should be rejected")
+
+    assert client.messages[0] == {
+        "type": "request_buy_in",
+        "minimum": Decimal("100"),
+        "message": "Minimum buy-in is 100.",
     }
 
 

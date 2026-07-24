@@ -295,7 +295,8 @@ class MainWindow(QMainWindow):
             )
         )
         amount = QDoubleSpinBox()
-        amount.setRange(0.01, 1_000_000_000)
+        minimum = float(request.get("minimum", 0.01))
+        amount.setRange(minimum, 1_000_000_000)
         amount.setDecimals(2)
         amount.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
@@ -304,7 +305,7 @@ class MainWindow(QMainWindow):
             float(request.get("default_amount", self.controller.buy_in))
         )
         form = QFormLayout()
-        form.addRow("Rebuy amount", amount)
+        form.addRow(f"Rebuy amount (min {minimum:g})", amount)
         layout.addLayout(form)
         seconds = request.get("seconds")
         if seconds:

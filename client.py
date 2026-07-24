@@ -201,9 +201,14 @@ def ask_seat(available_seats):
         return seat
 
 
-def ask_buy_in():
+def ask_buy_in(minimum=Decimal("0")):
     while True:
-        raw_amount = prompt_input("Buy-in amount: ").strip()
+        prompt = (
+            f"Buy-in amount (minimum {minimum}): "
+            if minimum > 0
+            else "Buy-in amount: "
+        )
+        raw_amount = prompt_input(prompt).strip()
         try:
             amount = Decimal(raw_amount)
             if not amount.is_finite():
@@ -212,17 +217,18 @@ def ask_buy_in():
             print("Please enter a valid number.")
             continue
 
-        if amount <= 0:
-            print("Buy-in must be greater than zero.")
+        if amount < minimum:
+            print(f"Buy-in must be at least {minimum}.")
             continue
 
         return amount
 
 
-def ask_rebuy(default_amount):
+def ask_rebuy(default_amount, minimum=Decimal("0")):
     while True:
         raw_amount = prompt_input(
-            f"Rebuy amount [{default_amount}] (blank to leave): "
+            f"Rebuy amount [{default_amount}, minimum {minimum}] "
+            "(blank to leave): "
         ).strip()
         if not raw_amount:
             return None
@@ -233,8 +239,8 @@ def ask_rebuy(default_amount):
         except InvalidOperation:
             print("Please enter a valid number.")
             continue
-        if amount <= 0:
-            print("Rebuy must be greater than zero.")
+        if amount < minimum:
+            print(f"Rebuy must be at least {minimum}.")
             continue
         return amount
 
@@ -603,7 +609,7 @@ class PokerClient:
             print(f"\n{message['message']}")
 
         elif message_type == "request_buy_in":
-            amount = ask_buy_in()
+            amount = ask_buy_in(Decimal(str(message.get("minimum", 0))))
             send_json(file_obj, {"type": "buy_in", "amount": amount})
 
         elif message_type == "request_seat":
@@ -737,7 +743,10 @@ class PokerClient:
 
         elif message_type == "request_rebuy":
             print(f"\n{message.get('message', 'You are out of chips.')}")
-            amount = ask_rebuy(message.get("default_amount", "1000"))
+            amount = ask_rebuy(
+                message.get("default_amount", "1000"),
+                Decimal(str(message.get("minimum", 0))),
+            )
             send_json(
                 file_obj,
                 {

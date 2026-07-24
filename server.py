@@ -15,7 +15,7 @@ from helicopter import HelicopterGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from game_categories import BoardCategory
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
-from nlh import HandEvaluator, NoLimitHoldemGame
+from nlh import HandEvaluator, NoLimitHoldemGame, money
 from plo import PotLimitOmahaGame
 from pof import PotOrFoldGame
 
@@ -588,7 +588,14 @@ class PokerTableSession:
         client.name = name
 
     def _request_buy_in(self, client):
-        client.send({"type": "request_buy_in"})
+        minimum_buy_in = self.minimum_buy_in()
+        client.send(
+            {
+                "type": "request_buy_in",
+                "minimum": minimum_buy_in,
+                "message": f"Minimum buy-in is {minimum_buy_in}.",
+            }
+        )
         buy_in_message = client.recv()
         if not buy_in_message or buy_in_message.get("type") != "buy_in":
             raise RuntimeError("Client disconnected before choosing a buy-in")
@@ -598,10 +605,21 @@ class PokerTableSession:
         except (TypeError, ValueError):
             raise RuntimeError("Invalid buy-in amount")
 
-        if buy_in <= 0:
-            raise RuntimeError("Buy-in must be greater than zero")
+        if buy_in < minimum_buy_in:
+            raise RuntimeError(f"Buy-in must be at least {minimum_buy_in}")
 
         client.buy_in = buy_in
+
+    def minimum_buy_in(self):
+        if self.game_class is PotOrFoldGame:
+            unit = self.pof_ante
+        elif self.game_class is AOFGame:
+            unit = self.aof_ante
+        elif issubclass(self.game_class, AllocatorGame):
+            unit = self.bomb_pot_ante
+        else:
+            unit = self.big_blind
+        return money(unit) * Decimal(50)
 
     def _release_pending_name(self, name):
         if not name:
@@ -2058,12 +2076,14 @@ class PokerTableSession:
 
     def _handle_rebuy(self, client):
         rebuy_amount = None
+        minimum_buy_in = self.minimum_buy_in()
         try:
             client.send(
                 {
                     "type": "request_rebuy",
                     "message": "You are out of chips. Rebuy to keep your seat.",
                     "default_amount": client.buy_in,
+                    "minimum": minimum_buy_in,
                     "seconds": TIMEOUTS["rebuy"],
                 }
             )
@@ -2078,8 +2098,18 @@ class PokerTableSession:
                 if response and response.get("type") == "rebuy":
                     if response.get("rebuy") is True:
                         amount = parse_money(response.get("amount"), "Rebuy")
-                        if amount > 0:
+                        if amount >= minimum_buy_in:
                             rebuy_amount = amount
+                        else:
+                            client.send(
+                                {
+                                    "type": "error",
+                                    "message": (
+                                        "Rebuy must be at least "
+                                        f"{minimum_buy_in}."
+                                    ),
+                                }
+                            )
         except (ConnectionError, OSError, TypeError, ValueError):
             rebuy_amount = None
 
