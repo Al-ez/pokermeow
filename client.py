@@ -304,7 +304,8 @@ def ask_table_config():
     while True:
         game_choice = prompt_input(
             "Choose game: [1] NLH  [2] PLO  [3] Allocator "
-            "[4] Helicopter  [5] AOF  [6] POF  [7] Pineapple: "
+            "[4] Helicopter  [5] AOF  [6] POF  [7] Pineapple "
+            "[8] Ultra Pineapple: "
         ).strip()
         if game_choice == "1":
             game = "nlh"
@@ -327,7 +328,10 @@ def ask_table_config():
         if game_choice == "7":
             game = "pineapple"
             break
-        print("Please choose 1, 2, 3, 4, 5, 6, or 7.")
+        if game_choice == "8":
+            game = "ultra_pineapple"
+            break
+        print("Please choose 1, 2, 3, 4, 5, 6, 7, or 8.")
 
     seat_cap = (
         10
@@ -367,6 +371,11 @@ def ask_table_config():
             )
         config["hole_cards"] = hole_cards
     elif game == "pineapple":
+        config["ante"] = ask_positive_int(
+            "Bomb pot ante per player [10]: ",
+            default=10,
+        )
+    elif game == "ultra_pineapple":
         config["ante"] = ask_positive_int(
             "Bomb pot ante per player [10]: ",
             default=10,

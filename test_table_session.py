@@ -1,6 +1,7 @@
 import threading
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from allocator import AllocatorGame
 from aof import AOFGame
@@ -10,6 +11,7 @@ from plo import PotLimitOmahaGame
 from server import PokerTableSession
 from pof import PotOrFoldGame
 from pineapple import PineappleGame
+from ultra_pineapple import UltraPineappleGame
 
 
 class FakeClient:
@@ -328,6 +330,12 @@ def test_minimum_buy_in_is_fifty_antes_for_ante_games():
                 "pineapple_ante": Decimal("3"),
             },
         ),
+        (
+            UltraPineappleGame,
+            {
+                "ultra_pineapple_ante": Decimal("3"),
+            },
+        ),
     )
     for game_class, options in configurations:
         session = PokerTableSession(
@@ -416,6 +424,107 @@ def test_pineapple_runs_discard_then_standard_betting_on_both_boards():
     assert betting_boards == [(3, 3), (4, 4), (5, 5)]
     assert all(len(player.hand) == 2 for player in session.game.players)
     assert any(message.get("type") == "showdown" for message in showdowns)
+
+
+def test_ultra_pineapple_all_in_still_pauses_and_discards_each_street():
+    session = PokerTableSession(
+        table_id="ULTR",
+        game_class=UltraPineappleGame,
+        game_name="Ultra Pineapple",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        ultra_pineapple_ante=Decimal("5"),
+    )
+    alice = FakeClient("Alice")
+    bob = FakeClient("Bob")
+    alice.leave_after_hand = False
+    bob.leave_after_hand = False
+    session.table.reserve_or_seat_client(alice, 1)
+    session.table.reserve_or_seat_client(bob, 2)
+    discard_boards = []
+    betting_boards = []
+    pauses = []
+
+    def discard_current_street(clients):
+        discard_boards.append(len(session.game.board))
+        for player in session.game.active_players():
+            session.game.discard(player.name, 0)
+
+    def move_all_in_on_flop(clients):
+        betting_boards.append(len(session.game.board))
+        for player in session.game.active_players():
+            player.all_in = True
+
+    session._broadcast_hand_message = lambda clients, message: None
+    session._send_states_to = lambda clients: None
+    session._request_aof_discards = discard_current_street
+    session._run_betting_round = move_all_in_on_flop
+    session._broadcast_to = lambda clients, message: None
+    session._wait_for_showdown_display = lambda clients, duration: None
+    session._activate_reserved_and_offer_waiting_list = lambda: None
+
+    with patch("server.time.sleep", lambda seconds: pauses.append(seconds)):
+        session._play_hand()
+
+    assert discard_boards == [3, 4, 5]
+    assert betting_boards == [3]
+    assert pauses == [1, 1]
+    assert all(len(player.hand) == 2 for player in session.game.players)
+    assert len(session.game.top_board) == 5
+    assert len(session.game.bottom_board) == 5
+
+
+def test_double_board_showdown_reports_each_board_winner_and_hand():
+    session = PokerTableSession(
+        table_id="PINE",
+        game_class=PineappleGame,
+        game_name="Pineapple",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        pineapple_ante=Decimal("5"),
+    )
+    game = PineappleGame(
+        {"Alice": 100, "Bob": 100},
+        ante=5,
+        shuffle=False,
+    )
+    alice, bob = game.players
+    from card import Card
+
+    alice.hand = [Card("A", "spades"), Card("A", "hearts")]
+    bob.hand = [Card("K", "spades"), Card("K", "hearts")]
+    for player in game.players:
+        player.total_committed = Decimal(100)
+    game.top_board = [
+        Card("2", "clubs"),
+        Card("3", "diamonds"),
+        Card("4", "hearts"),
+        Card("8", "spades"),
+        Card("9", "clubs"),
+    ]
+    game.bottom_board = [
+        Card("K", "clubs"),
+        Card("3", "clubs"),
+        Card("4", "diamonds"),
+        Card("8", "hearts"),
+        Card("9", "diamonds"),
+    ]
+    game.board = list(game.top_board)
+    session.game = game
+
+    details = session._double_board_showdown_results()
+
+    assert details[0]["label"] == "Board 1"
+    assert details[0]["winners"][0]["player"] == "Alice"
+    assert details[0]["winners"][0]["hand_name"] == "one pair"
+    assert details[1]["label"] == "Board 2"
+    assert details[1]["winners"][0]["player"] == "Bob"
+    assert details[1]["winners"][0]["hand_name"] == "three of a kind"
+    assert session._showdown_display_seconds(
+        SimpleNamespace(hand_name="one pair")
+    ) == 10
 
 
 if __name__ == "__main__":

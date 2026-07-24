@@ -857,6 +857,33 @@ class PokerTableDisplay(QWidget):
             )
             self.winning_hand_label.setVisible(True)
 
+    def show_double_board_result(self, result):
+        board = list(result.get("board", []))
+        label = result.get("label", "Board")
+        spotlight_cards = list(result.get("spotlight_cards", []))
+        self.community_cards = board
+        self.board_label.setText(
+            f"<b>{label}:</b> {cards_html(board, spotlight_cards)}"
+        )
+        self.board_label.setToolTip(
+            f"{label}: {cards_text(board)}"
+        )
+        for widget in self.action_widgets.values():
+            widget.cards_label.spotlight(spotlight_cards)
+
+        winner_text = []
+        for winner in result.get("winners", []):
+            player = winner.get("player", "Player")
+            hand_name = str(
+                winner.get("hand_name", "winning hand")
+            ).replace("_", " ").title()
+            winner_text.append(f"{player} wins with {hand_name}")
+        banner = label
+        if winner_text:
+            banner += " · " + "; ".join(winner_text)
+        self.winning_hand_label.setText(banner)
+        self.winning_hand_label.setVisible(True)
+
     def show_payouts(self, payouts):
         for player, amount in payouts.items():
             seat_number = self.player_seats.get(player)
@@ -1153,6 +1180,7 @@ class MainMenuView(QWidget):
         self.game.addItem("AOF", "aof")
         self.game.addItem("Pot or Fold", "pof")
         self.game.addItem("Pineapple", "pineapple")
+        self.game.addItem("Ultra Pineapple", "ultra_pineapple")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.seats = ResponsiveSpinBox()
@@ -1189,6 +1217,12 @@ class MainMenuView(QWidget):
         self.pineapple_ante.setRange(0.01, 1_000_000_000)
         self.pineapple_ante.setValue(10)
         self.pineapple_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.ultra_pineapple_ante = ResponsiveDoubleSpinBox()
+        self.ultra_pineapple_ante.setRange(0.01, 1_000_000_000)
+        self.ultra_pineapple_ante.setValue(10)
+        self.ultra_pineapple_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
         self.pof_hole_cards = QWidget()
@@ -1241,6 +1275,10 @@ class MainMenuView(QWidget):
         self.host_form.addRow("AOF ante", self.aof_ante)
         self.host_form.addRow("POF ante", self.pof_ante)
         self.host_form.addRow("Pineapple ante", self.pineapple_ante)
+        self.host_form.addRow(
+            "Ultra Pineapple ante",
+            self.ultra_pineapple_ante,
+        )
         self.host_form.addRow("Hole cards", self.pof_hole_cards)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
@@ -1277,16 +1315,25 @@ class MainMenuView(QWidget):
         aof = self.game.currentData() == "aof"
         pof = self.game.currentData() == "pof"
         pineapple = self.game.currentData() == "pineapple"
+        ultra_pineapple = self.game.currentData() == "ultra_pineapple"
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
         self.host_form.setRowVisible(self.pof_ante, pof)
         self.host_form.setRowVisible(self.pineapple_ante, pineapple)
+        self.host_form.setRowVisible(
+            self.ultra_pineapple_ante,
+            ultra_pineapple,
+        )
         self.host_form.setRowVisible(self.pof_hole_cards, pof)
         self.host_form.setRowVisible(self.aof_multiplier, aof)
         self.host_form.setRowVisible(self.aof_run_twice, aof)
         self.host_form.setRowVisible(
             self.big_blind,
-            not allocator and not aof and not pof and not pineapple,
+            not allocator
+            and not aof
+            and not pof
+            and not pineapple
+            and not ultra_pineapple,
         )
         game = self.game.currentData()
         self.seats.setMaximum(
@@ -1322,6 +1369,8 @@ class MainMenuView(QWidget):
             config["hole_cards"] = self.pof_hole_cards_group.checkedId()
         elif config["game"] == "pineapple":
             config["ante"] = self.pineapple_ante.value()
+        elif config["game"] == "ultra_pineapple":
+            config["ante"] = self.ultra_pineapple_ante.value()
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(
@@ -1573,6 +1622,9 @@ class TableView(QWidget):
 
     def spotlight_showdown(self, cards, hand_name=""):
         self.table_display.spotlight_showdown(cards, hand_name)
+
+    def show_double_board_result(self, result):
+        self.table_display.show_double_board_result(result)
 
     def show_runout_boards(self, boards):
         self.table_display.show_runout_boards(boards)

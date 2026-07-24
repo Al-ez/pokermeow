@@ -352,19 +352,33 @@ class MainWindow(QMainWindow):
                 result.get("payouts", {}),
             )
         else:
-            runout_boards = result.get("runout_boards")
-            if runout_boards:
-                self.pages.table.show_runout_boards(runout_boards)
             self.pages.table.show_showdown_hands(result.get("hands", []))
-            self.pages.table.show_payouts(result.get("payouts", {}))
-            spotlight_cards = result.get("spotlight_cards")
-            if spotlight_cards:
-                hand_name = result.get("hand_name", "")
+            board_results = result.get("double_board_results")
+            if board_results and len(board_results) == 2:
+                self.pages.table.show_double_board_result(board_results[0])
                 QTimer.singleShot(
-                    650,
-                    lambda cards=list(spotlight_cards), name=hand_name:
-                        self.pages.table.spotlight_showdown(cards, name),
+                    5000,
+                    lambda detail=dict(board_results[1]):
+                        self.pages.table.show_double_board_result(detail),
                 )
+                QTimer.singleShot(
+                    5650,
+                    lambda awards=dict(result.get("payouts", {})):
+                        self.pages.table.show_payouts(awards),
+                )
+            else:
+                runout_boards = result.get("runout_boards")
+                if runout_boards:
+                    self.pages.table.show_runout_boards(runout_boards)
+                self.pages.table.show_payouts(result.get("payouts", {}))
+                spotlight_cards = result.get("spotlight_cards")
+                if spotlight_cards:
+                    hand_name = result.get("hand_name", "")
+                    QTimer.singleShot(
+                        650,
+                        lambda cards=list(spotlight_cards), name=hand_name:
+                            self.pages.table.spotlight_showdown(cards, name),
+                    )
         self._showdown_seconds = max(0, int(result.get("display_seconds", 3)))
         self._show_showdown_timer()
         self._showdown_timer.start()

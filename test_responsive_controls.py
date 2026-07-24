@@ -71,3 +71,15 @@ def test_pineapple_creation_exposes_ante_and_existing_buy_in():
     assert menu.buy_in.isVisibleTo(menu)
     assert not menu.big_blind.isVisibleTo(menu.host_box)
     assert menu.seats.maximum() == 10
+
+
+def test_ultra_pineapple_creation_exposes_ante_and_seven_seat_cap():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    menu.game.setCurrentIndex(menu.game.findData("ultra_pineapple"))
+    app.processEvents()
+
+    assert menu.ultra_pineapple_ante.isVisibleTo(menu.host_box)
+    assert menu.buy_in.isVisibleTo(menu)
+    assert not menu.big_blind.isVisibleTo(menu.host_box)
+    assert menu.seats.maximum() == 7
