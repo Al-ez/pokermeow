@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from allocator import AllocatorGame
 from aof import AOFGame
 from server import PokerTableSession
+from pof import PotOrFoldGame
 
 
 class FakeClient:
@@ -203,6 +204,78 @@ def test_aof_run_twice_is_disabled_by_default():
     session.game.start_hand()
 
     assert session._request_run_it_vote([]) == 1
+
+
+def test_pof_never_offers_run_it_twice():
+    session = PokerTableSession(
+        table_id="POF1",
+        game_class=PotOrFoldGame,
+        game_name="Pot or Fold",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        pof_ante=Decimal("5"),
+        pof_hole_cards=4,
+    )
+    session.game = PotOrFoldGame(
+        {"Alice": 100, "Bob": 100},
+        ante=5,
+        hole_cards=4,
+        shuffle=False,
+    )
+    session.game.start_hand()
+    session.game.deal_flop()
+
+    assert session._request_run_it_vote([]) == 1
+
+
+def test_pof_pot_and_call_runs_to_exactly_five_cards_and_showdown():
+    session = PokerTableSession(
+        table_id="POF1",
+        game_class=PotOrFoldGame,
+        game_name="Pot or Fold",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        pof_ante=Decimal("5"),
+        pof_hole_cards=4,
+    )
+    alice = FakeClient("Alice")
+    bob = FakeClient("Bob")
+    alice.leave_after_hand = False
+    bob.leave_after_hand = False
+    session.table.reserve_or_seat_client(alice, 1)
+    session.table.reserve_or_seat_client(bob, 2)
+
+    betting_rounds = []
+    showdowns = []
+
+    def play_pof_betting_round(clients):
+        betting_rounds.append(len(session.game.board))
+        assert betting_rounds == [3]
+        opener = session.game.players[session.game.action_index]
+        session.game.act(opener.name, "pot")
+        caller = session.game.players[session.game.action_index]
+        session.game.act(caller.name, "call")
+
+    def deal_single_runout(clients):
+        session.game.deal_turn()
+        session.game.deal_river()
+        return [list(session.game.board)]
+
+    session._broadcast_hand_message = lambda clients, message: None
+    session._send_states_to = lambda clients: None
+    session._run_betting_round = play_pof_betting_round
+    session._deal_all_in_runout = deal_single_runout
+    session._broadcast_to = lambda clients, message: showdowns.append(message)
+    session._wait_for_showdown_display = lambda clients, duration: None
+    session._activate_reserved_and_offer_waiting_list = lambda: None
+
+    session._play_hand()
+
+    assert betting_rounds == [3]
+    assert len(session.game.board) == 5
+    assert any(message.get("type") == "showdown" for message in showdowns)
 
 
 def test_displayed_payout_is_the_full_amount_returned_from_the_pot():

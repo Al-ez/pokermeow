@@ -103,7 +103,15 @@ class ClientController:
 
     def submit_action(self, action, amount=0):
         action = str(action).lower()
-        if action not in {"fold", "check", "call", "bet", "raise", "all_in"}:
+        if action not in {
+            "fold",
+            "check",
+            "call",
+            "bet",
+            "raise",
+            "all_in",
+            "pot",
+        }:
             raise ValueError(f"Unknown action: {action}")
         self._send({"type": "action", "action": action, "amount": amount})
         self._emit("action_sent", {"action": action, "amount": amount})

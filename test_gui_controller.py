@@ -79,6 +79,18 @@ def test_controller_exposes_state_and_action_events_without_qt():
     }
 
 
+def test_controller_submits_pof_pot_action():
+    controller, connection = make_controller()
+
+    controller.submit_action("pot")
+
+    assert connection.sent[-1] == {
+        "type": "action",
+        "action": "pot",
+        "amount": 0,
+    }
+
+
 def test_controller_exposes_standalone_table_snapshots():
     controller, connection = make_controller()
     events = []

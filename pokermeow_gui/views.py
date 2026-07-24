@@ -1151,6 +1151,7 @@ class MainMenuView(QWidget):
         self.game.addItem("No-Limit Texas Hold'em", "nlh")
         self.game.addItem("Pot-Limit Omaha", "plo")
         self.game.addItem("AOF", "aof")
+        self.game.addItem("Pot or Fold", "pof")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.seats = ResponsiveSpinBox()
@@ -1177,6 +1178,26 @@ class MainMenuView(QWidget):
         self.aof_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
+        self.pof_ante = ResponsiveDoubleSpinBox()
+        self.pof_ante.setRange(0.01, 1_000_000_000)
+        self.pof_ante.setValue(10)
+        self.pof_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.pof_hole_cards = QWidget()
+        hole_cards_layout = QHBoxLayout(self.pof_hole_cards)
+        hole_cards_layout.setContentsMargins(0, 0, 0, 0)
+        hole_cards_layout.setSpacing(6)
+        self.pof_hole_cards_group = QButtonGroup(self)
+        self.pof_hole_cards_group.setExclusive(True)
+        self.pof_hole_card_buttons = {}
+        for count in (4, 5, 6):
+            button = ResponsiveChoiceButton(str(count))
+            button.setCheckable(True)
+            self.pof_hole_cards_group.addButton(button, count)
+            self.pof_hole_card_buttons[count] = button
+            hole_cards_layout.addWidget(button)
+        self.pof_hole_card_buttons[6].setChecked(True)
         self.aof_multiplier = QWidget()
         multiplier_layout = QHBoxLayout(self.aof_multiplier)
         multiplier_layout.setContentsMargins(0, 0, 0, 0)
@@ -1211,6 +1232,8 @@ class MainMenuView(QWidget):
         self.host_form.addRow("Big blind", self.big_blind)
         self.host_form.addRow("Ante", self.bomb_ante)
         self.host_form.addRow("AOF ante", self.aof_ante)
+        self.host_form.addRow("POF ante", self.pof_ante)
+        self.host_form.addRow("Hole cards", self.pof_hole_cards)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
         root.addWidget(self.host_box)
@@ -1244,11 +1267,17 @@ class MainMenuView(QWidget):
     def _game_changed(self):
         allocator = self.game.currentData() in {"allocator", "helicopter"}
         aof = self.game.currentData() == "aof"
+        pof = self.game.currentData() == "pof"
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
+        self.host_form.setRowVisible(self.pof_ante, pof)
+        self.host_form.setRowVisible(self.pof_hole_cards, pof)
         self.host_form.setRowVisible(self.aof_multiplier, aof)
         self.host_form.setRowVisible(self.aof_run_twice, aof)
-        self.host_form.setRowVisible(self.big_blind, not allocator and not aof)
+        self.host_form.setRowVisible(
+            self.big_blind,
+            not allocator and not aof and not pof,
+        )
         game = self.game.currentData()
         self.seats.setMaximum(10 if game == "nlh" else (6 if game == "helicopter" else 7))
 
@@ -1274,6 +1303,9 @@ class MainMenuView(QWidget):
             config["allow_run_twice"] = (
                 self.aof_run_twice_group.checkedId() == 1
             )
+        elif config["game"] == "pof":
+            config["ante"] = self.pof_ante.value()
+            config["hole_cards"] = self.pof_hole_cards_group.checkedId()
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(
@@ -1369,7 +1401,7 @@ class TableView(QWidget):
     chat_requested = Signal(str)
     leave_requested = Signal()
 
-    ACTIONS = ("fold", "check", "call", "bet", "raise", "all_in")
+    ACTIONS = ("fold", "check", "call", "pot", "bet", "raise", "all_in")
 
     def __init__(self, parent=None):
         super().__init__(parent)

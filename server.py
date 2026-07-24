@@ -17,6 +17,7 @@ from game_categories import BoardCategory
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
 from nlh import HandEvaluator, NoLimitHoldemGame
 from plo import PotLimitOmahaGame
+from pof import PotOrFoldGame
 
 
 def local_ipv4_addresses():
@@ -419,6 +420,8 @@ class PokerTableSession:
         aof_ante=0,
         aof_multiplier=0,
         aof_allow_run_twice=False,
+        pof_ante=0,
+        pof_hole_cards=6,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -430,6 +433,8 @@ class PokerTableSession:
         self.aof_ante = aof_ante
         self.aof_multiplier = aof_multiplier
         self.aof_allow_run_twice = bool(aof_allow_run_twice)
+        self.pof_ante = pof_ante
+        self.pof_hole_cards = pof_hole_cards
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -447,6 +452,11 @@ class PokerTableSession:
         print(f"Game: {self.game_name}")
         if issubclass(self.game_class, AllocatorGame):
             print(f"Bomb pot ante: {self.bomb_pot_ante}")
+        elif self.game_class is PotOrFoldGame:
+            print(
+                f"Ante: {self.pof_ante}; "
+                f"hole cards: {self.pof_hole_cards}"
+            )
         elif self.game_class is AOFGame:
             print(f"Ante: {self.aof_ante}; multiplier: {self.aof_multiplier}")
         else:
@@ -766,6 +776,13 @@ class PokerTableSession:
                 multiplier=self.aof_multiplier,
                 shuffle=True,
             )
+        elif self.game_class is PotOrFoldGame:
+            self.game = self.game_class(
+                player_stacks,
+                ante=self.pof_ante,
+                hole_cards=self.pof_hole_cards,
+                shuffle=True,
+            )
         elif issubclass(self.game_class, AllocatorGame):
             self.game = self.game_class(
                 player_stacks,
@@ -794,12 +811,26 @@ class PokerTableSession:
             if self.game_class is AOFGame:
                 self._request_aof_discards(seated_clients)
 
-            if not issubclass(self.game_class, AllocatorGame):
+            if self.game_class is PotOrFoldGame:
+                self.game.deal_flop()
+                self._broadcast_hand_message(seated_clients, "Flop dealt.")
+                self._send_states_to(seated_clients)
+                self._run_betting_round(seated_clients)
+                if len(self.game.active_players()) > 1:
+                    runout_boards = self._deal_all_in_runout(seated_clients)
+            elif not issubclass(self.game_class, AllocatorGame):
                 self._run_betting_round(seated_clients)
 
-            if len(self.game.active_players()) > 1 and self._should_skip_to_showdown():
+            if (
+                self.game_class is not PotOrFoldGame
+                and len(self.game.active_players()) > 1
+                and self._should_skip_to_showdown()
+            ):
                 runout_boards = self._deal_all_in_runout(seated_clients)
-            elif len(self.game.active_players()) > 1:
+            elif (
+                self.game_class is not PotOrFoldGame
+                and len(self.game.active_players()) > 1
+            ):
                 self.game.deal_flop()
                 self._broadcast_hand_message(
                     seated_clients,
@@ -884,7 +915,10 @@ class PokerTableSession:
                     for winner in result.winners
                 }
                 allocator_details = None
-            elif self.game_class is PotLimitOmahaGame and len(self.game.board) == 5:
+            elif (
+                issubclass(self.game_class, PotLimitOmahaGame)
+                and len(self.game.board) == 5
+            ):
                 showdown_scores = {
                     player.name: self.game._best_plo_hand(
                         player.hand,
@@ -967,7 +1001,10 @@ class PokerTableSession:
             spotlight_cards = None
             if (
                 result.hand_name != "uncontested"
-                and self.game_class in {NoLimitHoldemGame, PotLimitOmahaGame}
+                and (
+                    self.game_class is NoLimitHoldemGame
+                    or issubclass(self.game_class, PotLimitOmahaGame)
+                )
                 and showdown_scores
             ):
                 spotlight_cards = self._spotlight_cards_for_scores(showdown_scores)
@@ -1079,7 +1116,7 @@ class PokerTableSession:
                 continue
 
             acted_players.add(player.name)
-            if action in {"bet", "raise", "all_in"} and self.game.current_bet > 0:
+            if action in {"bet", "raise", "all_in", "pot"} and self.game.current_bet > 0:
                 acted_players = {player.name}
 
             self._broadcast_hand_message(
@@ -1372,6 +1409,7 @@ class PokerTableSession:
     def _request_run_it_vote(self, seated_clients):
         if (
             self.game.board_category is not BoardCategory.SINGLE_BOARD
+            or self.game_class is PotOrFoldGame
             or len(self.game.board) >= 5
             or (
                 self.game_class is AOFGame
@@ -2091,6 +2129,9 @@ class PokerTableSession:
         if result.action == "bet":
             return f"{result.player} bets {result.amount}."
 
+        if result.action == "pot":
+            return f"{result.player} pots {result.amount}."
+
         if result.action == "raise":
             raise_amount = result.current_bet - previous_current_bet
             return (
@@ -2228,6 +2269,9 @@ class NetworkPokerServer:
         elif game_choice == "aof":
             game_class = AOFGame
             game_name = "AOF"
+        elif game_choice == "pof":
+            game_class = PotOrFoldGame
+            game_name = "Pot or Fold"
         elif game_choice == "allocator":
             game_class = AllocatorGame
             game_name = "Allocator"
@@ -2251,7 +2295,22 @@ class NetworkPokerServer:
         aof_ante = 0
         aof_multiplier = 0
         aof_allow_run_twice = False
-        if game_class is AOFGame:
+        pof_ante = 0
+        pof_hole_cards = 6
+        if game_class is PotOrFoldGame:
+            pof_ante = parse_money(message.get("ante"), "Ante")
+            pof_hole_cards = self._parse_int(
+                message.get("hole_cards"),
+                "Hole cards",
+            )
+            if pof_hole_cards not in PotOrFoldGame.ALLOWED_HOLE_CARDS:
+                choices = ", ".join(
+                    str(value) for value in PotOrFoldGame.ALLOWED_HOLE_CARDS
+                )
+                raise RuntimeError(f"Hole cards must be one of: {choices}")
+            small_blind = Decimal("1")
+            big_blind = Decimal("2")
+        elif game_class is AOFGame:
             aof_ante = parse_money(message.get("ante"), "Ante")
             aof_multiplier = self._parse_int(
                 message.get("multiplier"),
@@ -2292,6 +2351,8 @@ class NetworkPokerServer:
             aof_ante=aof_ante,
             aof_multiplier=aof_multiplier,
             aof_allow_run_twice=aof_allow_run_twice,
+            pof_ante=pof_ante,
+            pof_hole_cards=pof_hole_cards,
             shutdown_event=self.shutdown_event,
         )
 

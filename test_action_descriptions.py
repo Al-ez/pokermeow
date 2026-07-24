@@ -37,6 +37,14 @@ def test_raise_description_handles_existing_blind_commitment():
     assert description == "Bob raises 10 to 15."
 
 
+def test_pot_description_includes_the_committed_amount():
+    result = action_result("pot", "15", "15")
+
+    description = PokerTableSession._describe_action(result)
+
+    assert description == "Bob pots 15."
+
+
 def test_net_winnings_exclude_the_winners_own_contribution():
     session = object.__new__(PokerTableSession)
     session.game = SimpleNamespace(
