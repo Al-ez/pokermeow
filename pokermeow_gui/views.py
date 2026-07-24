@@ -1061,6 +1061,13 @@ class PokerTableDisplay(QWidget):
         return value + (0.5 - value) * fraction
 
     def _community_cards_html(self, state):
+        runout_boards = state.get("runout_boards")
+        if runout_boards and len(runout_boards) == 2:
+            return (
+                f"<b>Run 1:</b> {cards_html(runout_boards[0])}"
+                "<br>"
+                f"<b>Run 2:</b> {cards_html(runout_boards[1])}"
+            )
         if "top_board" in state:
             return (
                 f"<b>Top:</b> {cards_html(state.get('top_board', []))}"
@@ -1070,6 +1077,12 @@ class PokerTableDisplay(QWidget):
         return cards_html(state.get("board", []))
 
     def _community_cards_text(self, state):
+        runout_boards = state.get("runout_boards")
+        if runout_boards and len(runout_boards) == 2:
+            return (
+                f"Run 1: {cards_text(runout_boards[0])} | "
+                f"Run 2: {cards_text(runout_boards[1])}"
+            )
         if "top_board" in state:
             return (
                 f"Top: {cards_text(state.get('top_board', []))} | "

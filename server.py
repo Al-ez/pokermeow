@@ -786,6 +786,7 @@ class PokerTableSession:
 
         try:
             runout_boards = None
+            self._current_runout_boards = None
             self.game.start_hand()
             self._broadcast_hand_message(seated_clients, "New hand started.")
             self._send_states_to(seated_clients)
@@ -1201,29 +1202,55 @@ class PokerTableSession:
 
         return {"type": "action", "action": "fold", "amount": 0}
 
-    def _deal_remaining_board(self, seated_clients):
+    def _deal_remaining_board(
+        self,
+        seated_clients,
+        *,
+        pace_runout=False,
+        pause_after_final=False,
+    ):
+        deal_streets = []
         if len(self.game.board) < 3:
-            self.game.deal_flop()
-            self._broadcast_hand_message(
-                seated_clients,
-                "Flops dealt." if issubclass(self.game_class, AllocatorGame) else "Flop dealt.",
+            deal_streets.append(
+                (
+                    self.game.deal_flop,
+                    "Flops dealt."
+                    if issubclass(self.game_class, AllocatorGame)
+                    else "Flop dealt.",
+                )
             )
 
         if len(self.game.board) < 4:
-            self.game.deal_turn()
-            self._broadcast_hand_message(
-                seated_clients,
-                "Turns dealt." if issubclass(self.game_class, AllocatorGame) else "Turn dealt.",
+            deal_streets.append(
+                (
+                    self.game.deal_turn,
+                    "Turns dealt."
+                    if issubclass(self.game_class, AllocatorGame)
+                    else "Turn dealt.",
+                )
             )
 
         if len(self.game.board) < 5:
-            self.game.deal_river()
-            self._broadcast_hand_message(
-                seated_clients,
-                "Rivers dealt." if issubclass(self.game_class, AllocatorGame) else "River dealt.",
+            deal_streets.append(
+                (
+                    self.game.deal_river,
+                    "Rivers dealt."
+                    if issubclass(self.game_class, AllocatorGame)
+                    else "River dealt.",
+                )
             )
 
-        self._send_states_to(seated_clients)
+        for street_index, (deal_street, message) in enumerate(deal_streets):
+            deal_street()
+            self._broadcast_hand_message(seated_clients, message)
+            if pace_runout:
+                self._send_states_to(seated_clients)
+                has_next_reveal = street_index < len(deal_streets) - 1
+                if has_next_reveal or pause_after_final:
+                    time.sleep(1)
+
+        if not pace_runout:
+            self._send_states_to(seated_clients)
 
     def _request_aof_discards(self, seated_clients):
         self._broadcast_hand_message(
@@ -1315,10 +1342,20 @@ class PokerTableSession:
         run_count = self._request_run_it_vote(seated_clients)
         starting_board = list(self.game.board)
         boards = []
+        self._current_runout_boards = None
 
         for run_number in range(run_count):
             self.game.board = list(starting_board)
-            self._deal_remaining_board(seated_clients)
+            if run_number == 1:
+                self._current_runout_boards = [
+                    list(boards[0]),
+                    self.game.board,
+                ]
+            self._deal_remaining_board(
+                seated_clients,
+                pace_runout=True,
+                pause_after_final=run_number < run_count - 1,
+            )
             boards.append(list(self.game.board))
             if run_count == 2:
                 self._broadcast_hand_message(
@@ -1328,7 +1365,8 @@ class PokerTableSession:
                 )
 
         self.game.board = list(boards[0])
-        self._send_states_to(seated_clients)
+        if run_count == 2:
+            self._send_states_to(seated_clients)
         return boards
 
     def _request_run_it_vote(self, seated_clients):
@@ -1708,10 +1746,21 @@ class PokerTableSession:
                 continue
 
             try:
+                state = visible_state_for(self.game, current_client.name)
+                current_runouts = getattr(
+                    self,
+                    "_current_runout_boards",
+                    None,
+                )
+                if current_runouts:
+                    state["runout_boards"] = [
+                        [str(card) for card in board]
+                        for board in current_runouts
+                    ]
                 current_client.send(
                     {
                         "type": "state",
-                        "state": visible_state_for(self.game, current_client.name),
+                        "state": state,
                         "table": self._table_status(),
                     }
                 )

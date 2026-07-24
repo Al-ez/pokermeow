@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from card import Card
 from nlh import NoLimitHoldemGame
-from server import run_count_for_votes
+from server import PokerTableSession, run_count_for_votes
 
 
 def c(rank, suit):
@@ -81,3 +81,121 @@ def test_run_it_twice_requires_every_active_player_to_choose_twice():
         players,
         {"Alice": "twice", "Bob": "twice"},
     ) == 1
+
+
+class FakeRunoutGame:
+    def __init__(self, board=None):
+        self.board = list(board or [])
+        self.next_card = 0
+
+    def _cards(self, count):
+        ranks = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
+        cards = [
+            c(ranks[(self.next_card + offset) % len(ranks)], "clubs")
+            for offset in range(count)
+        ]
+        self.next_card += count
+        return cards
+
+    def deal_flop(self):
+        self.board.extend(self._cards(3))
+
+    def deal_turn(self):
+        self.board.extend(self._cards(1))
+
+    def deal_river(self):
+        self.board.extend(self._cards(1))
+
+
+def runout_session(monkeypatch, run_count, starting_board=None):
+    session = object.__new__(PokerTableSession)
+    session.game = FakeRunoutGame(starting_board)
+    session.game_class = NoLimitHoldemGame
+    session._request_run_it_vote = lambda clients: run_count
+    events = []
+    session.runout_snapshots = []
+
+    def record_state(clients):
+        events.append(("state", len(session.game.board)))
+        current_runouts = getattr(session, "_current_runout_boards", None)
+        session.runout_snapshots.append(
+            [len(board) for board in current_runouts]
+            if current_runouts
+            else None
+        )
+
+    session._send_states_to = record_state
+    session._broadcast_hand_message = lambda clients, message: events.append(
+        ("message", message)
+    )
+    monkeypatch.setattr(
+        "server.time.sleep",
+        lambda seconds: events.append(("sleep", seconds)),
+    )
+    return session, events
+
+
+def test_single_all_in_runout_reveals_each_street_one_second_apart(monkeypatch):
+    session, events = runout_session(monkeypatch, 1)
+
+    boards = session._deal_all_in_runout([])
+
+    assert [event for event in events if event[0] in {"state", "sleep"}] == [
+        ("state", 3),
+        ("sleep", 1),
+        ("state", 4),
+        ("sleep", 1),
+        ("state", 5),
+    ]
+    assert len(boards) == 1
+
+
+def test_run_twice_completes_first_board_before_revealing_second(monkeypatch):
+    session, events = runout_session(monkeypatch, 2)
+
+    boards = session._deal_all_in_runout([])
+
+    assert [event for event in events if event[0] in {"state", "sleep"}] == [
+        ("state", 3),
+        ("sleep", 1),
+        ("state", 4),
+        ("sleep", 1),
+        ("state", 5),
+        ("sleep", 1),
+        ("state", 3),
+        ("sleep", 1),
+        ("state", 4),
+        ("sleep", 1),
+        ("state", 5),
+        ("state", 5),
+    ]
+    assert session.runout_snapshots == [
+        None,
+        None,
+        None,
+        [5, 3],
+        [5, 4],
+        [5, 5],
+        [5, 5],
+    ]
+    assert len(boards) == 2
+
+
+def test_turn_all_in_run_twice_reveals_rivers_one_at_a_time(monkeypatch):
+    turn_board = [c("2", "clubs"), c("3", "clubs"), c("4", "clubs"), c("5", "clubs")]
+    session, events = runout_session(monkeypatch, 2, turn_board)
+
+    boards = session._deal_all_in_runout([])
+
+    assert [event for event in events if event[0] in {"state", "sleep"}] == [
+        ("state", 5),
+        ("sleep", 1),
+        ("state", 5),
+        ("state", 5),
+    ]
+    assert session.runout_snapshots == [
+        None,
+        [5, 5],
+        [5, 5],
+    ]
+    assert len(boards) == 2
