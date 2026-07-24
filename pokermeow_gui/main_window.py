@@ -257,7 +257,11 @@ class MainWindow(QMainWindow):
     def _request_aof_discard(self, payload):
         if self._aof_dialog is not None:
             self._aof_dialog.accept()
-        dialog = AOFDiscardDialog(payload.get("hand", []), self)
+        dialog = AOFDiscardDialog(
+            payload.get("hand", []),
+            self,
+            game_name=payload.get("game", "AOF"),
+        )
         dialog.discarded.connect(self.controller.submit_aof_discard)
         self._aof_dialog = dialog
         dialog.show()

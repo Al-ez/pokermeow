@@ -9,6 +9,7 @@ from nlh import NoLimitHoldemGame
 from plo import PotLimitOmahaGame
 from server import PokerTableSession
 from pof import PotOrFoldGame
+from pineapple import PineappleGame
 
 
 class FakeClient:
@@ -321,6 +322,12 @@ def test_minimum_buy_in_is_fifty_antes_for_ante_games():
                 "pof_hole_cards": 6,
             },
         ),
+        (
+            PineappleGame,
+            {
+                "pineapple_ante": Decimal("3"),
+            },
+        ),
     )
     for game_class, options in configurations:
         session = PokerTableSession(
@@ -362,6 +369,53 @@ def test_server_rejects_buy_in_below_the_table_minimum():
         "minimum": Decimal("100"),
         "message": "Minimum buy-in is 100.",
     }
+
+
+def test_pineapple_runs_discard_then_standard_betting_on_both_boards():
+    session = PokerTableSession(
+        table_id="PINE",
+        game_class=PineappleGame,
+        game_name="Pineapple",
+        small_blind=Decimal("1"),
+        big_blind=Decimal("2"),
+        max_seats=2,
+        pineapple_ante=Decimal("5"),
+    )
+    alice = FakeClient("Alice")
+    bob = FakeClient("Bob")
+    alice.leave_after_hand = False
+    bob.leave_after_hand = False
+    session.table.reserve_or_seat_client(alice, 1)
+    session.table.reserve_or_seat_client(bob, 2)
+    betting_boards = []
+    showdowns = []
+
+    def discard_every_card(clients):
+        for player in session.game.players:
+            session.game.discard(player.name, 0)
+
+    def check_betting_round(clients):
+        betting_boards.append(
+            (len(session.game.top_board), len(session.game.bottom_board))
+        )
+        first = session.game.players[session.game.action_index]
+        session.game.act(first.name, "check")
+        second = session.game.players[session.game.action_index]
+        session.game.act(second.name, "check")
+
+    session._broadcast_hand_message = lambda clients, message: None
+    session._send_states_to = lambda clients: None
+    session._request_aof_discards = discard_every_card
+    session._run_betting_round = check_betting_round
+    session._broadcast_to = lambda clients, message: showdowns.append(message)
+    session._wait_for_showdown_display = lambda clients, duration: None
+    session._activate_reserved_and_offer_waiting_list = lambda: None
+
+    session._play_hand()
+
+    assert betting_boards == [(3, 3), (4, 4), (5, 5)]
+    assert all(len(player.hand) == 2 for player in session.game.players)
+    assert any(message.get("type") == "showdown" for message in showdowns)
 
 
 if __name__ == "__main__":

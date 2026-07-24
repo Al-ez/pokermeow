@@ -7,9 +7,9 @@ from .views import card_display_color, compact_card_text
 class AOFDiscardDialog(QDialog):
     discarded = Signal(int)
 
-    def __init__(self, cards, parent=None):
+    def __init__(self, cards, parent=None, game_name="AOF"):
         super().__init__(parent)
-        self.setWindowTitle("AOF discard")
+        self.setWindowTitle(f"{game_name} discard")
         self.setModal(True)
         self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
 

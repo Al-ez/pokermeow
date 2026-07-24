@@ -59,3 +59,15 @@ def test_pof_creation_exposes_hole_cards_ante_and_existing_buy_in():
     assert menu.pof_ante.isVisibleTo(menu.host_box)
     assert menu.buy_in.isVisibleTo(menu)
     assert not menu.aof_run_twice.isVisibleTo(menu.host_box)
+
+
+def test_pineapple_creation_exposes_ante_and_existing_buy_in():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    menu.game.setCurrentIndex(menu.game.findData("pineapple"))
+    app.processEvents()
+
+    assert menu.pineapple_ante.isVisibleTo(menu.host_box)
+    assert menu.buy_in.isVisibleTo(menu)
+    assert not menu.big_blind.isVisibleTo(menu.host_box)
+    assert menu.seats.maximum() == 10

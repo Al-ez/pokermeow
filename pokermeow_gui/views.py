@@ -1152,6 +1152,7 @@ class MainMenuView(QWidget):
         self.game.addItem("Pot-Limit Omaha", "plo")
         self.game.addItem("AOF", "aof")
         self.game.addItem("Pot or Fold", "pof")
+        self.game.addItem("Pineapple", "pineapple")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.seats = ResponsiveSpinBox()
@@ -1182,6 +1183,12 @@ class MainMenuView(QWidget):
         self.pof_ante.setRange(0.01, 1_000_000_000)
         self.pof_ante.setValue(10)
         self.pof_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.pineapple_ante = ResponsiveDoubleSpinBox()
+        self.pineapple_ante.setRange(0.01, 1_000_000_000)
+        self.pineapple_ante.setValue(10)
+        self.pineapple_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
         self.pof_hole_cards = QWidget()
@@ -1233,6 +1240,7 @@ class MainMenuView(QWidget):
         self.host_form.addRow("Ante", self.bomb_ante)
         self.host_form.addRow("AOF ante", self.aof_ante)
         self.host_form.addRow("POF ante", self.pof_ante)
+        self.host_form.addRow("Pineapple ante", self.pineapple_ante)
         self.host_form.addRow("Hole cards", self.pof_hole_cards)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
@@ -1268,18 +1276,24 @@ class MainMenuView(QWidget):
         allocator = self.game.currentData() in {"allocator", "helicopter"}
         aof = self.game.currentData() == "aof"
         pof = self.game.currentData() == "pof"
+        pineapple = self.game.currentData() == "pineapple"
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
         self.host_form.setRowVisible(self.pof_ante, pof)
+        self.host_form.setRowVisible(self.pineapple_ante, pineapple)
         self.host_form.setRowVisible(self.pof_hole_cards, pof)
         self.host_form.setRowVisible(self.aof_multiplier, aof)
         self.host_form.setRowVisible(self.aof_run_twice, aof)
         self.host_form.setRowVisible(
             self.big_blind,
-            not allocator and not aof and not pof,
+            not allocator and not aof and not pof and not pineapple,
         )
         game = self.game.currentData()
-        self.seats.setMaximum(10 if game == "nlh" else (6 if game == "helicopter" else 7))
+        self.seats.setMaximum(
+            10
+            if game in {"nlh", "pineapple"}
+            else (6 if game == "helicopter" else 7)
+        )
 
     def _set_mode(self, mode):
         self.mode = mode
@@ -1306,6 +1320,8 @@ class MainMenuView(QWidget):
         elif config["game"] == "pof":
             config["ante"] = self.pof_ante.value()
             config["hole_cards"] = self.pof_hole_cards_group.checkedId()
+        elif config["game"] == "pineapple":
+            config["ante"] = self.pineapple_ante.value()
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(

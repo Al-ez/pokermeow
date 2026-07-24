@@ -18,6 +18,7 @@ from network_protocol import ProtocolError, recv_json, send_json, visible_state_
 from nlh import HandEvaluator, NoLimitHoldemGame, money
 from plo import PotLimitOmahaGame
 from pof import PotOrFoldGame
+from pineapple import PineappleGame
 
 
 def local_ipv4_addresses():
@@ -422,6 +423,7 @@ class PokerTableSession:
         aof_allow_run_twice=False,
         pof_ante=0,
         pof_hole_cards=6,
+        pineapple_ante=0,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -435,6 +437,7 @@ class PokerTableSession:
         self.aof_allow_run_twice = bool(aof_allow_run_twice)
         self.pof_ante = pof_ante
         self.pof_hole_cards = pof_hole_cards
+        self.pineapple_ante = pineapple_ante
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -457,6 +460,8 @@ class PokerTableSession:
                 f"Ante: {self.pof_ante}; "
                 f"hole cards: {self.pof_hole_cards}"
             )
+        elif self.game_class is PineappleGame:
+            print(f"Double-board bomb pot ante: {self.pineapple_ante}")
         elif self.game_class is AOFGame:
             print(f"Ante: {self.aof_ante}; multiplier: {self.aof_multiplier}")
         else:
@@ -613,6 +618,8 @@ class PokerTableSession:
     def minimum_buy_in(self):
         if self.game_class is PotOrFoldGame:
             unit = self.pof_ante
+        elif self.game_class is PineappleGame:
+            unit = self.pineapple_ante
         elif self.game_class is AOFGame:
             unit = self.aof_ante
         elif issubclass(self.game_class, AllocatorGame):
@@ -794,6 +801,12 @@ class PokerTableSession:
                 multiplier=self.aof_multiplier,
                 shuffle=True,
             )
+        elif self.game_class is PineappleGame:
+            self.game = self.game_class(
+                player_stacks,
+                ante=self.pineapple_ante,
+                shuffle=True,
+            )
         elif self.game_class is PotOrFoldGame:
             self.game = self.game_class(
                 player_stacks,
@@ -829,7 +842,13 @@ class PokerTableSession:
             if self.game_class is AOFGame:
                 self._request_aof_discards(seated_clients)
 
-            if self.game_class is PotOrFoldGame:
+            if self.game_class is PineappleGame:
+                self.game.deal_flop()
+                self._broadcast_hand_message(seated_clients, "Flops dealt.")
+                self._send_states_to(seated_clients)
+                self._request_aof_discards(seated_clients)
+                self._run_betting_round(seated_clients)
+            elif self.game_class is PotOrFoldGame:
                 self.game.deal_flop()
                 self._broadcast_hand_message(seated_clients, "Flop dealt.")
                 self._send_states_to(seated_clients)
@@ -840,19 +859,21 @@ class PokerTableSession:
                 self._run_betting_round(seated_clients)
 
             if (
-                self.game_class is not PotOrFoldGame
+                self.game_class not in {PotOrFoldGame, PineappleGame}
                 and len(self.game.active_players()) > 1
                 and self._should_skip_to_showdown()
             ):
                 runout_boards = self._deal_all_in_runout(seated_clients)
             elif (
-                self.game_class is not PotOrFoldGame
+                self.game_class not in {PotOrFoldGame, PineappleGame}
                 and len(self.game.active_players()) > 1
             ):
                 self.game.deal_flop()
                 self._broadcast_hand_message(
                     seated_clients,
-                    "Flops dealt." if issubclass(self.game_class, AllocatorGame) else "Flop dealt.",
+                    "Flops dealt."
+                    if self.game.board_category is BoardCategory.DOUBLE_BOARD
+                    else "Flop dealt.",
                 )
                 self._send_states_to(seated_clients)
                 self._run_betting_round(seated_clients)
@@ -864,7 +885,9 @@ class PokerTableSession:
                     self.game.deal_turn()
                     self._broadcast_hand_message(
                         seated_clients,
-                        "Turns dealt." if issubclass(self.game_class, AllocatorGame) else "Turn dealt.",
+                        "Turns dealt."
+                        if self.game.board_category is BoardCategory.DOUBLE_BOARD
+                        else "Turn dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -876,7 +899,9 @@ class PokerTableSession:
                     self.game.deal_river()
                     self._broadcast_hand_message(
                         seated_clients,
-                        "Rivers dealt." if issubclass(self.game_class, AllocatorGame) else "River dealt.",
+                        "Rivers dealt."
+                        if self.game.board_category is BoardCategory.DOUBLE_BOARD
+                        else "River dealt.",
                     )
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
@@ -947,6 +972,35 @@ class PokerTableSession:
                 }
                 player_hand_names = {
                     name: score[3] for name, score in showdown_scores.items()
+                }
+                winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
+                }
+                allocator_details = None
+            elif (
+                self.game_class is PineappleGame
+                and len(self.game.top_board) == 5
+                and len(self.game.bottom_board) == 5
+            ):
+                board_scores = [
+                    {
+                        player.name: self.game._score_hand(player.hand, board)
+                        for player in self.game.players
+                        if not player.folded
+                    }
+                    for board in (
+                        self.game.top_board,
+                        self.game.bottom_board,
+                    )
+                ]
+                player_hand_names = {
+                    player.name: " / ".join(
+                        scores[player.name][3]
+                        for scores in board_scores
+                    )
+                    for player in self.game.players
+                    if not player.folded
                 }
                 winner_hand_names = {
                     winner: player_hand_names[winner]
@@ -1270,7 +1324,7 @@ class PokerTableSession:
                 (
                     self.game.deal_flop,
                     "Flops dealt."
-                    if issubclass(self.game_class, AllocatorGame)
+                    if self.game.board_category is BoardCategory.DOUBLE_BOARD
                     else "Flop dealt.",
                 )
             )
@@ -1280,7 +1334,7 @@ class PokerTableSession:
                 (
                     self.game.deal_turn,
                     "Turns dealt."
-                    if issubclass(self.game_class, AllocatorGame)
+                    if self.game.board_category is BoardCategory.DOUBLE_BOARD
                     else "Turn dealt.",
                 )
             )
@@ -1290,7 +1344,7 @@ class PokerTableSession:
                 (
                     self.game.deal_river,
                     "Rivers dealt."
-                    if issubclass(self.game_class, AllocatorGame)
+                    if self.game.board_category is BoardCategory.DOUBLE_BOARD
                     else "River dealt.",
                 )
             )
@@ -1308,9 +1362,14 @@ class PokerTableSession:
             self._send_states_to(seated_clients)
 
     def _request_aof_discards(self, seated_clients):
+        game_name = (
+            "Pineapple"
+            if self.game_class is PineappleGame
+            else "AOF"
+        )
         self._broadcast_hand_message(
             seated_clients,
-            "AOF discard phase started. Waiting for every player.",
+            f"{game_name} discard phase started. Waiting for every player.",
         )
         errors = []
         threads = []
@@ -1339,7 +1398,7 @@ class PokerTableSession:
         self._send_states_to(seated_clients)
         self._broadcast_hand_message(
             seated_clients,
-            "Every player has discarded. AOF decisions started.",
+            f"Every player has discarded. {game_name} action started.",
         )
 
     def _collect_aof_discard(
@@ -1355,6 +1414,11 @@ class PokerTableSession:
                 {
                     "type": "request_aof_discard",
                     "hand": [str(card) for card in player.hand],
+                    "game": (
+                        "Pineapple"
+                        if self.game_class is PineappleGame
+                        else "AOF"
+                    ),
                 }
             )
             while not self.shutdown_event.is_set():
@@ -2302,6 +2366,9 @@ class NetworkPokerServer:
         elif game_choice == "pof":
             game_class = PotOrFoldGame
             game_name = "Pot or Fold"
+        elif game_choice == "pineapple":
+            game_class = PineappleGame
+            game_name = "Pineapple"
         elif game_choice == "allocator":
             game_class = AllocatorGame
             game_name = "Allocator"
@@ -2315,7 +2382,7 @@ class NetworkPokerServer:
         max_seats = self._parse_int(message.get("max_seats"), "Number of seats")
         seat_cap = (
             10
-            if game_class is NoLimitHoldemGame
+            if game_class in {NoLimitHoldemGame, PineappleGame}
             else (6 if game_class is HelicopterGame else 7)
         )
         if max_seats < 2 or max_seats > seat_cap:
@@ -2327,6 +2394,7 @@ class NetworkPokerServer:
         aof_allow_run_twice = False
         pof_ante = 0
         pof_hole_cards = 6
+        pineapple_ante = 0
         if game_class is PotOrFoldGame:
             pof_ante = parse_money(message.get("ante"), "Ante")
             pof_hole_cards = self._parse_int(
@@ -2338,6 +2406,10 @@ class NetworkPokerServer:
                     str(value) for value in PotOrFoldGame.ALLOWED_HOLE_CARDS
                 )
                 raise RuntimeError(f"Hole cards must be one of: {choices}")
+            small_blind = Decimal("1")
+            big_blind = Decimal("2")
+        elif game_class is PineappleGame:
+            pineapple_ante = parse_money(message.get("ante"), "Ante")
             small_blind = Decimal("1")
             big_blind = Decimal("2")
         elif game_class is AOFGame:
@@ -2383,6 +2455,7 @@ class NetworkPokerServer:
             aof_allow_run_twice=aof_allow_run_twice,
             pof_ante=pof_ante,
             pof_hole_cards=pof_hole_cards,
+            pineapple_ante=pineapple_ante,
             shutdown_event=self.shutdown_event,
         )
 
