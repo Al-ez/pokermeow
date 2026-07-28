@@ -1,5 +1,22 @@
 # PokerMeow
 
+## Downloadable Windows Release
+
+Build a shareable Windows bundle from PowerShell:
+
+```powershell
+.\build_windows.ps1
+```
+
+The finished archive is written to `dist\PokerMeow-Windows.zip`. It contains
+`PokerMeow.exe` for every player, `PokerMeowServer.exe` for the host, and a
+friend-facing `HOW_TO_PLAY.txt`. Python is not required on computers that run
+the finished executables.
+
+The host starts `PokerMeowServer.exe` before opening `PokerMeow.exe`. Friends
+open only `PokerMeow.exe` and enter the host's IP address. See the included
+guide for LAN, Internet, firewall, and port-forwarding details.
+
 PokerMeow is a multiplayer poker server/client app. The server is authoritative:
 all game state, betting, table seating, reconnects, and showdown results live on
 the server.

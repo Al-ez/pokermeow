@@ -1524,6 +1524,59 @@ class PokerTableSession:
 
     def _request_allocator_allocations(self, seated_clients):
         self._send_states_to(seated_clients)
+        self._broadcast_hand_message(
+            seated_clients,
+            "Allocation phase started. Waiting for all players.",
+        )
+
+        errors = []
+        threads = []
+        ready_players = set()
+        ready_condition = threading.Condition()
+        allocations_locked = threading.Event()
+        active_players = list(self.game.active_players())
+
+        for player in active_players:
+            client = self._client_by_name(player.name, seated_clients)
+            thread = threading.Thread(
+                target=self._collect_allocator_allocation,
+                args=(
+                    client, player, errors, ready_players, ready_condition,
+                    allocations_locked,
+                ),
+            )
+            thread.start()
+            threads.append(thread)
+
+        # Require the whole table to remain ready briefly. This lets an
+        # already-sent Cancel ready reach the server before allocations lock.
+        with ready_condition:
+            while not errors:
+                while len(ready_players) < len(active_players) and not errors:
+                    ready_condition.wait()
+                if errors:
+                    break
+                changed = ready_condition.wait(timeout=0.5)
+                if not changed and len(ready_players) == len(active_players):
+                    allocations_locked.set()
+                    break
+            if errors:
+                allocations_locked.set()
+
+        for thread in threads:
+            thread.join()
+
+        if errors:
+            raise RuntimeError(errors[0])
+
+        for player in active_players:
+            client = self._client_by_name(player.name, seated_clients)
+            client.send({"type": "allocator_locked"})
+
+        self._broadcast_hand_message(
+            seated_clients,
+            "All allocations submitted.",
+        )
 
     def _deal_all_in_runout(self, seated_clients):
         run_count = self._request_run_it_vote(seated_clients)
@@ -1658,59 +1711,6 @@ class PokerTableSession:
             "Run-it vote expired without unanimous twice. Running it once.",
         )
         return 1
-        self._broadcast_hand_message(
-            seated_clients,
-            "Allocation phase started. Waiting for all players.",
-        )
-
-        errors = []
-        threads = []
-        ready_players = set()
-        ready_condition = threading.Condition()
-        allocations_locked = threading.Event()
-        active_players = list(self.game.active_players())
-
-        for player in active_players:
-            client = self._client_by_name(player.name, seated_clients)
-            thread = threading.Thread(
-                target=self._collect_allocator_allocation,
-                args=(
-                    client, player, errors, ready_players, ready_condition,
-                    allocations_locked,
-                ),
-            )
-            thread.start()
-            threads.append(thread)
-
-        # Require the whole table to remain ready briefly. This lets an
-        # already-sent Cancel ready reach the server before allocations lock.
-        with ready_condition:
-            while not errors:
-                while len(ready_players) < len(active_players) and not errors:
-                    ready_condition.wait()
-                if errors:
-                    break
-                changed = ready_condition.wait(timeout=0.5)
-                if not changed and len(ready_players) == len(active_players):
-                    allocations_locked.set()
-                    break
-            if errors:
-                allocations_locked.set()
-
-        for thread in threads:
-            thread.join()
-
-        if errors:
-            raise RuntimeError(errors[0])
-
-        for player in active_players:
-            client = self._client_by_name(player.name, seated_clients)
-            client.send({"type": "allocator_locked"})
-
-        self._broadcast_hand_message(
-            seated_clients,
-            "All allocations submitted.",
-        )
 
     def _collect_allocator_allocation(
         self, client, player, errors, ready_players, ready_condition,

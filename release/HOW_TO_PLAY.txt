@@ -1,0 +1,43 @@
+POKERMEOW - WINDOWS QUICK START
+===============================
+
+WHAT TO RUN
+-----------
+Every player runs PokerMeow.exe.
+Only the person hosting the server also runs PokerMeowServer.exe.
+
+HOSTING A GAME
+--------------
+1. Start PokerMeowServer.exe and leave its console window open.
+2. If Windows Firewall asks, allow access on Private networks.
+3. Start PokerMeow.exe.
+4. Leave Server set to 127.0.0.1, enter a username, and click Host Game.
+5. Give your friends the server IP address and the four-character table ID.
+
+JOINING ON THE SAME WI-FI / LAN
+-------------------------------
+1. The host runs "ipconfig" in Command Prompt and finds their IPv4 Address
+   (usually something like 192.168.1.23).
+2. Start PokerMeow.exe.
+3. Choose Join Game and enter the host's IPv4 address, your username, and the
+   table ID. Leave the port set to 8765.
+
+JOINING OVER THE INTERNET
+-------------------------
+The host must forward TCP port 8765 in their router to the host computer's
+local IPv4 address, and allow TCP port 8765 through Windows Firewall. Friends
+then use the host's public IP address in PokerMeow.exe.
+
+Some internet providers use CGNAT, which prevents ordinary port forwarding.
+If outside players cannot connect even with the correct firewall and router
+settings, a mesh VPN such as Tailscale or ZeroTier is usually the easiest
+alternative. All players join the same private network and use the host's VPN
+IP address.
+
+TROUBLESHOOTING
+---------------
+- "Connection refused": the server is not running, the IP is wrong, or the
+  firewall/port forwarding is blocking TCP port 8765.
+- Keep PokerMeowServer.exe open for the entire game.
+- Everyone must use the same server address, port, and table ID.
+- To reconnect, use the same username and table ID.

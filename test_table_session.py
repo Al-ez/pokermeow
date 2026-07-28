@@ -30,8 +30,12 @@ class RespondingClient(FakeClient):
         super().__init__(name)
         self.responses = list(responses)
 
-    def recv(self):
-        return self.responses.pop(0) if self.responses else None
+    def recv(self, stop_event=None):
+        if self.responses:
+            return self.responses.pop(0)
+        if stop_event is not None:
+            stop_event.wait(timeout=2)
+        return None
 
 
 def make_session(shutdown_event=None):
@@ -93,6 +97,55 @@ def test_allocator_showdown_timing_distinguishes_uncontested_pots():
     assert session._showdown_display_seconds(
         SimpleNamespace(hand_name="allocator score")
     ) == 15
+
+
+def test_allocator_and_helicopter_request_and_lock_player_allocations():
+    for game_class, game_name in (
+        (AllocatorGame, "Allocator"),
+        (HelicopterGame, "Helicopter"),
+    ):
+        session = PokerTableSession(
+            table_id="TEST",
+            game_class=game_class,
+            game_name=game_name,
+            small_blind=Decimal("1"),
+            big_blind=Decimal("2"),
+            max_seats=2,
+            bomb_pot_ante=1,
+        )
+        allocation = {
+            "type": "allocator_allocation",
+            "top": [1, 2],
+            "bottom": [3, 4],
+            "hand": [5, 6],
+            "ready": True,
+        }
+        alice = RespondingClient("Alice", [allocation])
+        bob = RespondingClient("Bob", [allocation])
+        session.table.reserve_or_seat_client(alice, 1)
+        session.table.reserve_or_seat_client(bob, 2)
+        session.game = game_class(
+            {"Alice": 100, "Bob": 100},
+            bomb_pot_ante=1,
+            shuffle=False,
+        )
+        session.game.start_hand()
+        session.game.deal_flop()
+        session.game.deal_turn()
+        session.game.deal_river()
+
+        session._request_allocator_allocations([alice, bob])
+
+        assert set(session.game.allocations) == {"Alice", "Bob"}
+        for client in (alice, bob):
+            assert any(
+                message.get("type") == "request_allocator_allocation"
+                for message in client.messages
+            )
+            assert any(
+                message.get("type") == "allocator_locked"
+                for message in client.messages
+            )
 
 
 def test_showdown_spotlight_includes_every_player_tied_for_strongest_hand():
