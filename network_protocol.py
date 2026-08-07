@@ -88,5 +88,6 @@ def visible_state_for(game, player_name):
     if hasattr(game, "terminated_ranks"):
         state["terminated_board"] = game.terminated_board
         state["terminated_ranks"] = sorted(game.terminated_ranks)
+        state["terminated_card_counts"] = game.terminated_card_counts
 
     return state

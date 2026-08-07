@@ -25,7 +25,12 @@ def test_chosen_flop_ranks_destroy_every_hand_and_the_live_board():
     game.start_hand()
     game.top_board = [card("A"), card("J", "hearts"), card("9", "clubs")]
     game.bottom_board = [card("A", "diamonds"), card("7"), card("2")]
-    game.players[0].hand = [card("A"), card("K"), card("J"), card("4")]
+    game.players[0].hand = [
+        card("A", "hearts"),
+        card("K"),
+        card("J"),
+        card("4"),
+    ]
     game.players[1].hand = [card("9"), card("Q"), card("3")]
 
     game.choose_terminated_board("top")
@@ -35,16 +40,17 @@ def test_chosen_flop_ranks_destroy_every_hand_and_the_live_board():
     assert [item.rank for item in game.players[1].hand] == ["Q", "3"]
     assert [item.rank for item in game.bottom_board] == ["7", "2"]
     assert game.board == game.bottom_board
+    assert game.terminated_card_counts == {"A": 3, "J": 2, "9": 2}
 
 
 def test_later_terminator_card_decimates_rank_and_live_collateral():
     game = make_game()
     game.start_hand()
     game.top_board = [card("A"), card("J"), card("9")]
-    game.bottom_board = [card("7"), card("2"), card("K")]
+    game.bottom_board = [card("7", "clubs"), card("2"), card("K")]
     game.street = 3
     game.choose_terminated_board("top")
-    game.players[0].hand = [card("7"), card("Q")]
+    game.players[0].hand = [card("7", "hearts"), card("Q")]
     game.deck.cards = [card("4"), card("7"), card("3")]
 
     game.deal_turn()
@@ -52,6 +58,32 @@ def test_later_terminator_card_decimates_rank_and_live_collateral():
     assert "7" in game.terminated_ranks
     assert [item.rank for item in game.players[0].hand] == ["Q"]
     assert "7" not in [item.rank for item in game.live_board]
+    assert game.terminated_card_counts["7"] == 3
+
+
+def test_turn_is_visible_before_termination_is_applied():
+    game = make_game()
+    game.start_hand()
+    game.top_board = [card("A"), card("J"), card("9")]
+    game.bottom_board = [card("7", "clubs"), card("2"), card("K")]
+    game.street = 3
+    game.choose_terminated_board("top")
+    game.players[0].hand = [card("7", "hearts"), card("Q")]
+    game.deck.cards = [card("4"), card("7"), card("3")]
+
+    game.reveal_turn()
+
+    assert game.pending_terminated_rank == "7"
+    assert "7" not in game.terminated_ranks
+    assert [item.rank for item in game.live_board] == ["7", "2", "K", "4"]
+    assert [item.rank for item in game.players[0].hand] == ["7", "Q"]
+
+    game.apply_pending_termination()
+
+    assert game.pending_terminated_rank is None
+    assert "7" in game.terminated_ranks
+    assert [item.rank for item in game.live_board] == ["2", "K", "4"]
+    assert [item.rank for item in game.players[0].hand] == ["Q"]
 
 
 def test_short_surviving_hands_use_available_cards_only():
@@ -118,6 +150,7 @@ def test_dealer_hole_cards_stay_hidden_until_a_board_is_chosen():
     game.choose_terminated_board("top")
     revealed = visible_state_for(game, dealer)
     assert "hand" in revealed["players"][dealer]
+    assert revealed["terminated_card_counts"] == game.terminated_card_counts
 
 
 def test_terminator_betting_is_capped_at_the_size_of_the_pot():

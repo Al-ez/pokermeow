@@ -879,14 +879,22 @@ class PokerTableSession:
                 self._send_states_to(seated_clients)
                 self._run_betting_round(seated_clients)
                 if len(self.game.active_players()) > 1:
-                    self.game.deal_turn()
-                    self._broadcast_hand_message(seated_clients, "Turns dealt; ranks decimated.")
+                    self.game.reveal_turn()
+                    self._broadcast_hand_message(seated_clients, "Turns dealt.")
+                    self._send_states_to(seated_clients)
+                    time.sleep(0.5)
+                    self.game.apply_pending_termination()
+                    self._broadcast_hand_message(seated_clients, "Turn rank decimated.")
                     self._send_states_to(seated_clients)
                     if not self._should_skip_to_showdown():
                         self._run_betting_round(seated_clients)
                 if len(self.game.active_players()) > 1:
-                    self.game.deal_river()
-                    self._broadcast_hand_message(seated_clients, "Rivers dealt; ranks decimated.")
+                    self.game.reveal_river()
+                    self._broadcast_hand_message(seated_clients, "Rivers dealt.")
+                    self._send_states_to(seated_clients)
+                    time.sleep(0.5)
+                    self.game.apply_pending_termination()
+                    self._broadcast_hand_message(seated_clients, "River rank decimated.")
                     self._send_states_to(seated_clients)
                     if not self._should_skip_to_showdown():
                         self._run_betting_round(seated_clients)

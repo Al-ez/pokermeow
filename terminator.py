@@ -29,7 +29,9 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         self.bottom_board: List[Card] = []
         self.terminated_board = None
         self.terminated_ranks = set()
+        self.decimated_cards = set()
         self.street = 0
+        self.pending_terminated_rank = None
 
     def start_hand(self):
         self.deck = Deck(shuffle=self.shuffle)
@@ -38,7 +40,9 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         self.bottom_board = []
         self.terminated_board = None
         self.terminated_ranks = set()
+        self.decimated_cards = set()
         self.street = 0
+        self.pending_terminated_rank = None
         self.pot = ZERO
         self.current_bet = ZERO
         self.min_raise = self.big_blind
@@ -82,6 +86,13 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         return []
 
     def _apply_termination(self):
+        for card in (
+            [card for player in self.players for card in player.hand]
+            + list(self.top_board)
+            + list(self.bottom_board)
+        ):
+            if card.rank in self.terminated_ranks:
+                self.decimated_cards.add(card)
         for player in self.players:
             player.hand[:] = [
                 card for card in player.hand
@@ -91,9 +102,18 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         live[:] = [card for card in live if card.rank not in self.terminated_ranks]
         self.board = list(live)
 
-    def _deal_street(self):
+    @property
+    def terminated_card_counts(self):
+        return {
+            rank: sum(card.rank == rank for card in self.decimated_cards)
+            for rank in self.terminated_ranks
+        }
+
+    def _reveal_street(self):
         if self.terminated_board is None:
             raise RuntimeError("The dealer must terminate a board first")
+        if self.pending_terminated_rank is not None:
+            raise RuntimeError("The previous street must be decimated first")
         self._reset_betting_round()
         self.deck.deal_one()
         top_card = self.deck.deal_one()
@@ -101,22 +121,39 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         self.top_board.append(top_card)
         self.bottom_board.append(bottom_card)
         source_card = top_card if self.terminated_board == "top" else bottom_card
-        self.terminated_ranks.add(source_card.rank)
-        self._apply_termination()
+        self.pending_terminated_rank = source_card.rank
+        self.board = list(self.live_board)
         return top_card, bottom_card
 
-    def deal_turn(self):
+    def apply_pending_termination(self):
+        if self.pending_terminated_rank is None:
+            raise RuntimeError("There is no revealed street to decimate")
+        self.terminated_ranks.add(self.pending_terminated_rank)
+        self.pending_terminated_rank = None
+        self._apply_termination()
+
+    def reveal_turn(self):
         if self.street != 3:
             raise RuntimeError("Flops must be dealt before the turns")
-        cards = self._deal_street()
+        cards = self._reveal_street()
         self.street = 4
         return cards
 
-    def deal_river(self):
+    def reveal_river(self):
         if self.street != 4:
             raise RuntimeError("Turns must be dealt before the rivers")
-        cards = self._deal_street()
+        cards = self._reveal_street()
         self.street = 5
+        return cards
+
+    def deal_turn(self):
+        cards = self.reveal_turn()
+        self.apply_pending_termination()
+        return cards
+
+    def deal_river(self):
+        cards = self.reveal_river()
+        self.apply_pending_termination()
         return cards
 
     def _score_hand(self, hole_cards, board):

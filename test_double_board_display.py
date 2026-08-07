@@ -39,3 +39,22 @@ def test_terminator_marker_is_right_of_only_the_terminated_board():
     assert marker_position < html.index("<b>Bottom:</b>")
     assert "background:#000000" in html
     assert "font-family:Arial Black" in html
+
+
+def test_terminator_count_panel_lists_rank_totals():
+    app = QApplication.instance() or QApplication([])
+    display = PokerTableDisplay()
+
+    display._update_termination_counts(
+        {
+            "terminated_board": "top",
+            "terminated_card_counts": {"A": 3, "J": 4, "8": 2},
+        }
+    )
+    app.processEvents()
+
+    assert not display.termination_count_label.isHidden()
+    assert "Terminated cards" in display.termination_count_label.text()
+    assert "A</b> x3" in display.termination_count_label.text()
+    assert "J</b> x4" in display.termination_count_label.text()
+    assert "8</b> x2" in display.termination_count_label.text()

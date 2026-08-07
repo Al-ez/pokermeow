@@ -771,10 +771,20 @@ class PokerTableDisplay(QWidget):
         self.run_it_prompt.setFixedSize(180, 90)
         self.run_it_prompt.hide()
 
+        self.termination_count_label = QLabel(self.felt)
+        self.termination_count_label.setTextFormat(Qt.TextFormat.RichText)
+        self.termination_count_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.termination_count_label.setStyleSheet(
+            "background:#111827; color:#f8fafc; border:1px solid #475569;"
+            "border-radius:8px; padding:8px 10px; font-size:13px;"
+        )
+        self.termination_count_label.hide()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._layout_table(force=True)
         self._position_run_it_prompt()
+        self._position_termination_counts()
 
     def show_run_it_prompt(self):
         self._position_run_it_prompt()
@@ -795,6 +805,37 @@ class PokerTableDisplay(QWidget):
             max(margin, self.felt.height() - self.run_it_prompt.height() - margin),
         )
 
+    def _position_termination_counts(self):
+        if self.termination_count_label.isHidden():
+            return
+        self.termination_count_label.adjustSize()
+        margin = 14
+        self.termination_count_label.move(
+            max(margin, self.felt.width() - self.termination_count_label.width() - margin),
+            max(margin, (self.felt.height() - self.termination_count_label.height()) // 2),
+        )
+        self.termination_count_label.raise_()
+
+    def _update_termination_counts(self, state):
+        counts = state.get("terminated_card_counts")
+        if counts is None or state.get("terminated_board") is None:
+            self.termination_count_label.hide()
+            return
+        ordered_ranks = sorted(
+            counts,
+            key=lambda rank: RANK_STRENGTH.get(str(rank).upper(), -1),
+            reverse=True,
+        )
+        rows = "".join(
+            f"<div><b>{escape(str(rank))}</b> x{int(counts[rank])}</div>"
+            for rank in ordered_ranks
+        )
+        self.termination_count_label.setText(
+            "<b>Terminated cards</b>" + ("<br>" + rows if rows else "")
+        )
+        self.termination_count_label.show()
+        self._position_termination_counts()
+
     def set_pickable_seats(self, seats):
         self.pickable_seats = {int(seat) for seat in seats}
         for seat_number, widget in self.seat_widgets.items():
@@ -813,6 +854,7 @@ class PokerTableDisplay(QWidget):
         self.pot_label.setText("Waiting for players")
         self.board_label.setText("")
         self.winning_hand_label.setVisible(False)
+        self.termination_count_label.hide()
         self._set_visible_seats(seats, username)
         for seat in seats:
             seat_number = int(seat.get("seat", 0))
@@ -849,6 +891,7 @@ class PokerTableDisplay(QWidget):
         self.board_label.setText(self._community_cards_html(state))
         self.board_label.setToolTip(self._community_cards_text(state))
         self.winning_hand_label.setVisible(False)
+        self._update_termination_counts(state)
         self._set_visible_seats(seats, username)
 
         for seat in seats:
@@ -1112,6 +1155,7 @@ class PokerTableDisplay(QWidget):
                 22,
                 22,
             )
+        self._position_termination_counts()
 
     def _place_widget(self, widget, x_ratio, y_ratio, width, height):
         x = int(self.width() * x_ratio - width / 2)
@@ -1136,12 +1180,6 @@ class PokerTableDisplay(QWidget):
             )
         if "top_board" in state:
             terminated = state.get("terminated_board")
-            ranks = state.get("terminated_ranks", [])
-            decimated = (
-                '<tr><td colspan="3" style="padding-top:4px;">'
-                f"<b>Decimated:</b> {escape(', '.join(ranks))}</td></tr>"
-                if ranks else ""
-            )
             return (
                 '<table align="center" cellspacing="3" cellpadding="0">'
                 '<tr><td style="padding-right:6px;"><b>Top:</b></td><td>'
@@ -1152,7 +1190,6 @@ class PokerTableDisplay(QWidget):
                 f"{cards_html(state.get('bottom_board', []))}</td>"
                 f"{terminated_board_marker_html() if terminated == 'bottom' else '<td></td>'}"
                 "</tr>"
-                f"{decimated}"
                 "</table>"
             )
         return cards_html(state.get("board", []))
