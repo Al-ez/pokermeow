@@ -47,6 +47,36 @@ SUIT_SYMBOLS = {
     "spades": "\u2660",
 }
 
+RANK_STRENGTH = {
+    rank: strength
+    for strength, rank in enumerate(
+        ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
+    )
+}
+SUIT_ORDER = {"diamonds": 0, "clubs": 1, "hearts": 2, "spades": 3}
+
+
+def sort_hole_cards(cards, mode):
+    """Return a presentation-only ordering of hole cards."""
+    def rank_and_suit(card):
+        rank = getattr(card, "rank", None)
+        suit = getattr(card, "suit", None)
+        if rank is None or suit is None:
+            rank, separator, suit = str(card).partition(" of ")
+            if not separator:
+                return str(card), ""
+        return str(rank).upper(), str(suit).lower()
+
+    def card_key(card):
+        rank, suit = rank_and_suit(card)
+        rank_key = -RANK_STRENGTH.get(rank, -1)
+        suit_key = SUIT_ORDER.get(suit, len(SUIT_ORDER))
+        if mode == "suit":
+            return suit_key, rank_key
+        return rank_key, suit_key
+
+    return sorted(cards, key=card_key)
+
 
 class _ResponsiveTextMixin:
     _maximum_text_pixels = 14
@@ -1488,6 +1518,35 @@ class TableView(QWidget):
         self.table_display.run_it_choice.connect(self.run_it_requested)
         root.addWidget(self.table_display, 1, 0)
 
+        self.card_sort_controls = QWidget()
+        card_sort_layout = QVBoxLayout(self.card_sort_controls)
+        card_sort_layout.setContentsMargins(8, 8, 8, 8)
+        card_sort_layout.setSpacing(4)
+        self.card_sort_group = QButtonGroup(self)
+        self.card_sort_group.setExclusive(True)
+        self.card_sort_buttons = {}
+        for mode, label in (
+            ("strength", "Sort by strength"),
+            ("suit", "Sort by suit"),
+        ):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.clicked.connect(
+                lambda checked=False, selected=mode: self._set_card_sort(selected)
+            )
+            self.card_sort_group.addButton(button)
+            self.card_sort_buttons[mode] = button
+            card_sort_layout.addWidget(button)
+        self.card_sort_controls.hide()
+        root.addWidget(
+            self.card_sort_controls,
+            1,
+            0,
+            alignment=(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
+            ),
+        )
+
         side = QVBoxLayout()
         history_box = QGroupBox("Action history")
         history_layout = QVBoxLayout(history_box)
@@ -1600,8 +1659,15 @@ class TableView(QWidget):
         self.action_request = {}
         self.sizing_action = None
         self.sizing_amounts = {}
+        self.card_sort_mode = None
+        self._latest_state = {}
+        self._latest_table = {}
+        self._latest_username = ""
 
     def update_state(self, state, table, username):
+        self._latest_state = state
+        self._latest_table = table
+        self._latest_username = username
         self.current_pot = decimal_or_zero(state.get("pot", 0))
         if table:
             self.set_table_context(table.get("table_id"))
@@ -1615,7 +1681,25 @@ class TableView(QWidget):
                 )
                 self.own_stack = decimal_or_zero(player.get("stack", 0))
                 break
-        self.table_display.update_game(state, table, username)
+        display_state = state
+        own_hand = state.get("players", {}).get(username, {}).get("hand", [])
+        self.card_sort_controls.setVisible(len(own_hand) >= 6)
+        if self.card_sort_mode and len(own_hand) >= 6:
+            display_state = dict(state)
+            display_state["players"] = dict(state.get("players", {}))
+            own_player = dict(display_state["players"].get(username, {}))
+            own_player["hand"] = sort_hole_cards(own_hand, self.card_sort_mode)
+            display_state["players"][username] = own_player
+        self.table_display.update_game(display_state, table, username)
+
+    def _set_card_sort(self, mode):
+        self.card_sort_mode = mode
+        if self._latest_state:
+            self.update_state(
+                self._latest_state,
+                self._latest_table,
+                self._latest_username,
+            )
 
     def show_showdown_hands(self, hands):
         self.table_display.show_showdown_hands(hands)
