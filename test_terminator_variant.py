@@ -1,6 +1,7 @@
 from card import Card
 from network_protocol import visible_state_for
 from terminator import TerminatorGame
+import pytest
 
 
 def card(rank, suit="spades"):
@@ -78,3 +79,17 @@ def test_dealer_hole_cards_stay_hidden_until_a_board_is_chosen():
     game.choose_terminated_board("top")
     revealed = visible_state_for(game, dealer)
     assert "hand" in revealed["players"][dealer]
+
+
+def test_terminator_betting_is_capped_at_the_size_of_the_pot():
+    game = make_game()
+    game.start_hand()
+    player = game.players[game.action_index]
+
+    assert game.max_bet(player.name) == 10
+    assert "all_in" not in game.legal_actions(player.name)
+    with pytest.raises(ValueError, match="Pot-limit bet"):
+        game.act(player.name, "bet", 11)
+
+    result = game.act(player.name, "bet", 10)
+    assert result.amount == 10

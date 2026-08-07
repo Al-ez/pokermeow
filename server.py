@@ -1202,6 +1202,7 @@ class PokerTableSession:
                 and (
                     self.game_class is NoLimitHoldemGame
                     or issubclass(self.game_class, PotLimitOmahaGame)
+                    or self.game_class is TerminatorGame
                 )
                 and showdown_scores
             ):

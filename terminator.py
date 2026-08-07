@@ -5,10 +5,11 @@ from card import Card
 from deck import Deck
 from game_categories import BoardCategory
 from nlh import HandEvaluator, HandResult, NoLimitHoldemGame, RANK_VALUES, ZERO, money
+from pot_limit import PotLimitBettingMixin
 
 
-class TerminatorGame(NoLimitHoldemGame):
-    """Six-card double-board bomb pot where one board destroys ranks."""
+class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
+    """Six-card, double-board pot-limit bomb pot where one board destroys ranks."""
 
     board_category = BoardCategory.DOUBLE_BOARD
 
