@@ -1,4 +1,5 @@
 from decimal import Decimal
+from itertools import combinations
 from typing import Dict, List, Tuple
 
 from card import Card
@@ -9,7 +10,7 @@ from pot_limit import PotLimitBettingMixin
 
 
 class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
-    """Six-card, double-board pot-limit bomb pot where one board destroys ranks."""
+    """Pot-limit bomb pot using a live board and at most two surviving hole cards."""
 
     board_category = BoardCategory.DOUBLE_BOARD
 
@@ -119,7 +120,27 @@ class TerminatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
         return cards
 
     def _score_hand(self, hole_cards, board):
-        cards = list(hole_cards) + list(board)
+        hole_cards = list(hole_cards)
+        board = list(board)
+        target_count = min(5, len(board) + min(2, len(hole_cards)))
+        candidates = []
+        for hole_count in range(min(2, len(hole_cards), target_count) + 1):
+            board_count = target_count - hole_count
+            if board_count > len(board):
+                continue
+            for selected_hole in combinations(hole_cards, hole_count):
+                for selected_board in combinations(board, board_count):
+                    candidates.append(
+                        self._score_available_cards(
+                            list(selected_hole) + list(selected_board)
+                        )
+                    )
+        if not candidates:
+            return -1, [], [], "no cards"
+        return max(candidates, key=lambda score: score[:2])
+
+    @staticmethod
+    def _score_available_cards(cards):
         if len(cards) >= 5:
             return HandEvaluator.best_hand(cards)
         if not cards:

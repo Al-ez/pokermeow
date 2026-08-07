@@ -67,6 +67,45 @@ def test_short_surviving_hands_use_available_cards_only():
     assert trip_twos[3] == "three of a kind"
 
 
+def test_terminator_uses_at_most_two_hole_cards_or_plays_the_board():
+    game = make_game()
+    royal_in_hand = [
+        card("A", "hearts"),
+        card("K", "hearts"),
+        card("Q", "hearts"),
+        card("J", "hearts"),
+        card("10", "hearts"),
+    ]
+    weak_board = [
+        card("2", "clubs"),
+        card("4", "diamonds"),
+        card("6", "spades"),
+        card("8", "clubs"),
+        card("9", "diamonds"),
+    ]
+
+    score = game._score_hand(royal_in_hand, weak_board)
+
+    assert score[3] != "straight flush"
+    assert len([item for item in score[2] if item in royal_in_hand]) <= 2
+
+
+def test_terminator_can_play_the_surviving_board_without_hole_cards():
+    game = make_game()
+    board = [
+        card("A", "hearts"),
+        card("K", "hearts"),
+        card("Q", "hearts"),
+        card("J", "hearts"),
+        card("10", "hearts"),
+    ]
+
+    score = game._score_hand([card("2"), card("3")], board)
+
+    assert score[3] == "straight flush"
+    assert score[2] == board
+
+
 def test_dealer_hole_cards_stay_hidden_until_a_board_is_chosen():
     game = make_game()
     game.start_hand()
