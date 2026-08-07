@@ -239,6 +239,15 @@ def cards_html(cards, spotlight=None):
     )
 
 
+def terminated_board_marker_html():
+    return (
+        '<td style="background:#000000; border:2px solid #000000; '
+        'width:28px; height:36px; text-align:center; vertical-align:middle; '
+        'font-family:Arial Black; font-size:25px; font-weight:1000; '
+        'color:#ef4444;">X</td>'
+    )
+
+
 class CardRow(QWidget):
     def __init__(self, empty_text="No cards", parent=None):
         super().__init__(parent)
@@ -1127,20 +1136,24 @@ class PokerTableDisplay(QWidget):
             )
         if "top_board" in state:
             terminated = state.get("terminated_board")
-            top_label = "Top (terminated)" if terminated == "top" else "Top"
-            bottom_label = (
-                "Bottom (terminated)" if terminated == "bottom" else "Bottom"
-            )
             ranks = state.get("terminated_ranks", [])
             decimated = (
-                f"<br><b>Decimated:</b> {escape(', '.join(ranks))}"
+                '<tr><td colspan="3" style="padding-top:4px;">'
+                f"<b>Decimated:</b> {escape(', '.join(ranks))}</td></tr>"
                 if ranks else ""
             )
             return (
-                f"<b>{top_label}:</b> {cards_html(state.get('top_board', []))}"
-                "<br>"
-                f"<b>{bottom_label}:</b> {cards_html(state.get('bottom_board', []))}"
+                '<table align="center" cellspacing="3" cellpadding="0">'
+                '<tr><td style="padding-right:6px;"><b>Top:</b></td><td>'
+                f"{cards_html(state.get('top_board', []))}</td>"
+                f"{terminated_board_marker_html() if terminated == 'top' else '<td></td>'}"
+                "</tr>"
+                '<tr><td style="padding-right:6px;"><b>Bottom:</b></td><td>'
+                f"{cards_html(state.get('bottom_board', []))}</td>"
+                f"{terminated_board_marker_html() if terminated == 'bottom' else '<td></td>'}"
+                "</tr>"
                 f"{decimated}"
+                "</table>"
             )
         return cards_html(state.get("board", []))
 
