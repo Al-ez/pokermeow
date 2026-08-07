@@ -63,7 +63,12 @@ def player_private_state(player):
 def visible_state_for(game, player_name):
     players = {}
     for player in game.players:
-        if player.name == player_name:
+        dealer_is_blind = (
+            getattr(game, "terminated_board", False) is None
+            and game.__class__.__name__ == "TerminatorGame"
+            and player.name == game.players[game.dealer_index].name
+        )
+        if player.name == player_name and not dealer_is_blind:
             players[player.name] = player_private_state(player)
         else:
             players[player.name] = player_public_state(player)
@@ -79,5 +84,9 @@ def visible_state_for(game, player_name):
     if hasattr(game, "top_board"):
         state["top_board"] = cards_text(game.top_board)
         state["bottom_board"] = cards_text(game.bottom_board)
+
+    if hasattr(game, "terminated_ranks"):
+        state["terminated_board"] = game.terminated_board
+        state["terminated_ranks"] = sorted(game.terminated_ranks)
 
     return state

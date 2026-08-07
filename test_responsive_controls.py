@@ -83,3 +83,14 @@ def test_ultra_pineapple_creation_exposes_ante_and_seven_seat_cap():
     assert menu.buy_in.isVisibleTo(menu)
     assert not menu.big_blind.isVisibleTo(menu.host_box)
     assert menu.seats.maximum() == 7
+
+
+def test_terminator_creation_exposes_its_bomb_pot_ante():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    menu.game.setCurrentIndex(menu.game.findData("terminator"))
+    app.processEvents()
+
+    assert menu.terminator_ante.isVisibleTo(menu.host_box)
+    assert not menu.big_blind.isVisibleTo(menu.host_box)
+    assert menu.seats.maximum() == 7

@@ -15,10 +15,11 @@ from helicopter import HelicopterGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from game_categories import BoardCategory
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
-from nlh import HandEvaluator, NoLimitHoldemGame, money
+from nlh import HandEvaluator, NoLimitHoldemGame, RANK_VALUES, money
 from plo import PotLimitOmahaGame
 from pof import PotOrFoldGame
 from pineapple import PineappleGame
+from terminator import TerminatorGame
 from ultra_pineapple import UltraPineappleGame
 
 
@@ -426,6 +427,7 @@ class PokerTableSession:
         pof_hole_cards=6,
         pineapple_ante=0,
         ultra_pineapple_ante=0,
+        terminator_ante=0,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -441,6 +443,7 @@ class PokerTableSession:
         self.pof_hole_cards = pof_hole_cards
         self.pineapple_ante = pineapple_ante
         self.ultra_pineapple_ante = ultra_pineapple_ante
+        self.terminator_ante = terminator_ante
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -465,6 +468,8 @@ class PokerTableSession:
             )
         elif self.game_class is PineappleGame:
             print(f"Double-board bomb pot ante: {self.pineapple_ante}")
+        elif self.game_class is TerminatorGame:
+            print(f"Terminator bomb pot ante: {self.terminator_ante}")
         elif self.game_class is UltraPineappleGame:
             print(
                 "Ultra Pineapple double-board bomb pot ante: "
@@ -630,6 +635,8 @@ class PokerTableSession:
             unit = self.ultra_pineapple_ante
         elif self.game_class is PineappleGame:
             unit = self.pineapple_ante
+        elif self.game_class is TerminatorGame:
+            unit = self.terminator_ante
         elif self.game_class is AOFGame:
             unit = self.aof_ante
         elif issubclass(self.game_class, AllocatorGame):
@@ -823,6 +830,12 @@ class PokerTableSession:
                 ante=self.pineapple_ante,
                 shuffle=True,
             )
+        elif self.game_class is TerminatorGame:
+            self.game = self.game_class(
+                player_stacks,
+                ante=self.terminator_ante,
+                shuffle=True,
+            )
         elif self.game_class is PotOrFoldGame:
             self.game = self.game_class(
                 player_stacks,
@@ -858,7 +871,26 @@ class PokerTableSession:
             if self.game_class is AOFGame:
                 self._request_aof_discards(seated_clients)
 
-            if self.game_class is UltraPineappleGame:
+            if self.game_class is TerminatorGame:
+                self.game.deal_flop()
+                self._broadcast_hand_message(seated_clients, "Two flops dealt.")
+                self._send_states_to(seated_clients)
+                self._request_terminator_board(seated_clients)
+                self._send_states_to(seated_clients)
+                self._run_betting_round(seated_clients)
+                if len(self.game.active_players()) > 1:
+                    self.game.deal_turn()
+                    self._broadcast_hand_message(seated_clients, "Turns dealt; ranks decimated.")
+                    self._send_states_to(seated_clients)
+                    if not self._should_skip_to_showdown():
+                        self._run_betting_round(seated_clients)
+                if len(self.game.active_players()) > 1:
+                    self.game.deal_river()
+                    self._broadcast_hand_message(seated_clients, "Rivers dealt; ranks decimated.")
+                    self._send_states_to(seated_clients)
+                    if not self._should_skip_to_showdown():
+                        self._run_betting_round(seated_clients)
+            elif self.game_class is UltraPineappleGame:
                 self.game.deal_flop()
                 self._broadcast_hand_message(seated_clients, "Flops dealt.")
                 self._send_states_to(seated_clients)
@@ -908,6 +940,7 @@ class PokerTableSession:
                     PotOrFoldGame,
                     PineappleGame,
                     UltraPineappleGame,
+                    TerminatorGame,
                 }
                 and len(self.game.active_players()) > 1
                 and self._should_skip_to_showdown()
@@ -919,6 +952,7 @@ class PokerTableSession:
                     PotOrFoldGame,
                     PineappleGame,
                     UltraPineappleGame,
+                    TerminatorGame,
                 }
                 and len(self.game.active_players()) > 1
             ):
@@ -932,7 +966,11 @@ class PokerTableSession:
                 self._send_states_to(seated_clients)
                 self._run_betting_round(seated_clients)
 
-            if len(self.game.active_players()) > 1 and len(self.game.board) == 3:
+            if (
+                self.game_class is not TerminatorGame
+                and len(self.game.active_players()) > 1
+                and len(self.game.board) == 3
+            ):
                 if self._should_skip_to_showdown():
                     runout_boards = self._deal_all_in_runout(seated_clients)
                 else:
@@ -946,7 +984,11 @@ class PokerTableSession:
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
 
-            if len(self.game.active_players()) > 1 and len(self.game.board) == 4:
+            if (
+                self.game_class is not TerminatorGame
+                and len(self.game.active_players()) > 1
+                and len(self.game.board) == 4
+            ):
                 if self._should_skip_to_showdown():
                     runout_boards = self._deal_all_in_runout(seated_clients)
                 else:
@@ -960,7 +1002,11 @@ class PokerTableSession:
                     self._send_states_to(seated_clients)
                     self._run_betting_round(seated_clients)
 
-            if len(self.game.active_players()) > 1 and len(self.game.board) < 5:
+            if (
+                self.game_class is not TerminatorGame
+                and len(self.game.active_players()) > 1
+                and len(self.game.board) < 5
+            ):
                 self._deal_remaining_board(seated_clients)
 
             if issubclass(self.game_class, AllocatorGame) and len(self.game.active_players()) > 1:
@@ -1062,6 +1108,23 @@ class PokerTableSession:
                     for winner in result.winners
                 }
                 allocator_details = None
+            elif self.game_class is TerminatorGame:
+                showdown_scores = {
+                    player.name: self.game._score_hand(
+                        player.hand,
+                        self.game.board,
+                    )
+                    for player in self.game.players
+                    if not player.folded
+                }
+                player_hand_names = {
+                    name: score[3] for name, score in showdown_scores.items()
+                }
+                winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
+                }
+                allocator_details = None
             elif len(self.game.board) == 5:
                 showdown_scores = {
                     # Board-first ordering makes a true board-playing chop
@@ -1095,6 +1158,7 @@ class PokerTableSession:
                 result.hand_name != "uncontested"
                 and self.game.board_category is BoardCategory.DOUBLE_BOARD
                 and not issubclass(self.game_class, AllocatorGame)
+                and self.game_class is not TerminatorGame
             ):
                 double_board_results = self._double_board_showdown_results()
 
@@ -1435,6 +1499,7 @@ class PokerTableSession:
             seated_clients,
             f"{game_name} discard phase started. Waiting for every player.",
         )
+
         errors = []
         threads = []
         discard_lock = threading.Lock()
@@ -1463,6 +1528,39 @@ class PokerTableSession:
         self._broadcast_hand_message(
             seated_clients,
             f"Every player has discarded. {game_name} action started.",
+        )
+
+    def _request_terminator_board(self, seated_clients):
+        dealer = self.game.players[self.game.dealer_index]
+        dealer_client = self.table.client_by_name(dealer.name)
+        choice = "top"
+        if dealer_client is not None and dealer_client.connected:
+            try:
+                dealer_client.send(
+                    {
+                        "type": "request_terminator_board",
+                        "top_board": [str(card) for card in self.game.top_board],
+                        "bottom_board": [str(card) for card in self.game.bottom_board],
+                    }
+                )
+                message = dealer_client.recv()
+                if message and message.get("type") == "terminator_board_choice":
+                    requested = str(message.get("board", "")).lower()
+                    if requested in {"top", "bottom"}:
+                        choice = requested
+            except ConnectionError:
+                dealer_client.connected = False
+        self.game.choose_terminated_board(choice)
+        ranks = ", ".join(
+            sorted(
+                self.game.terminated_ranks,
+                key=lambda rank: RANK_VALUES[rank],
+                reverse=True,
+            )
+        )
+        self._broadcast_hand_message(
+            seated_clients,
+            f"{dealer.name} terminated the {choice} board. Decimated ranks: {ranks}.",
         )
 
     def _collect_aof_discard(
@@ -2519,6 +2617,9 @@ class NetworkPokerServer:
         elif game_choice == "ultra_pineapple":
             game_class = UltraPineappleGame
             game_name = "Ultra Pineapple"
+        elif game_choice == "terminator":
+            game_class = TerminatorGame
+            game_name = "Terminator"
         elif game_choice == "allocator":
             game_class = AllocatorGame
             game_name = "Allocator"
@@ -2546,6 +2647,7 @@ class NetworkPokerServer:
         pof_hole_cards = 6
         pineapple_ante = 0
         ultra_pineapple_ante = 0
+        terminator_ante = 0
         if game_class is PotOrFoldGame:
             pof_ante = parse_money(message.get("ante"), "Ante")
             pof_hole_cards = self._parse_int(
@@ -2565,6 +2667,10 @@ class NetworkPokerServer:
             big_blind = Decimal("2")
         elif game_class is UltraPineappleGame:
             ultra_pineapple_ante = parse_money(message.get("ante"), "Ante")
+            small_blind = Decimal("1")
+            big_blind = Decimal("2")
+        elif game_class is TerminatorGame:
+            terminator_ante = parse_money(message.get("ante"), "Ante")
             small_blind = Decimal("1")
             big_blind = Decimal("2")
         elif game_class is AOFGame:
@@ -2612,6 +2718,7 @@ class NetworkPokerServer:
             pof_hole_cards=pof_hole_cards,
             pineapple_ante=pineapple_ante,
             ultra_pineapple_ante=ultra_pineapple_ante,
+            terminator_ante=terminator_ante,
             shutdown_event=self.shutdown_event,
         )
 

@@ -140,6 +140,12 @@ class ClientController:
             }
         )
 
+    def submit_terminator_board(self, board):
+        board = str(board).lower()
+        if board not in {"top", "bottom"}:
+            raise ValueError("Terminated board must be top or bottom")
+        self._send({"type": "terminator_board_choice", "board": board})
+
     def request_leave(self):
         self._send({"type": "leave_table"})
 
@@ -268,6 +274,8 @@ class ClientController:
             self._emit("chat_history", list(message.get("messages", [])))
         elif message_type == "request_aof_discard":
             self._emit("aof_discard_required", dict(message))
+        elif message_type == "request_terminator_board":
+            self._emit("terminator_board_required", dict(message))
         elif message_type == "aof_discarded":
             self._emit("aof_discarded", {})
         elif message_type == "hand_history":

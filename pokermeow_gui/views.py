@@ -1126,10 +1126,21 @@ class PokerTableDisplay(QWidget):
                 f"<b>Run 2:</b> {cards_html(runout_boards[1])}"
             )
         if "top_board" in state:
+            terminated = state.get("terminated_board")
+            top_label = "Top (terminated)" if terminated == "top" else "Top"
+            bottom_label = (
+                "Bottom (terminated)" if terminated == "bottom" else "Bottom"
+            )
+            ranks = state.get("terminated_ranks", [])
+            decimated = (
+                f"<br><b>Decimated:</b> {escape(', '.join(ranks))}"
+                if ranks else ""
+            )
             return (
-                f"<b>Top:</b> {cards_html(state.get('top_board', []))}"
+                f"<b>{top_label}:</b> {cards_html(state.get('top_board', []))}"
                 "<br>"
-                f"<b>Bottom:</b> {cards_html(state.get('bottom_board', []))}"
+                f"<b>{bottom_label}:</b> {cards_html(state.get('bottom_board', []))}"
+                f"{decimated}"
             )
         return cards_html(state.get("board", []))
 
@@ -1141,9 +1152,17 @@ class PokerTableDisplay(QWidget):
                 f"Run 2: {cards_text(runout_boards[1])}"
             )
         if "top_board" in state:
+            terminated = state.get("terminated_board")
+            top_label = "Top (terminated)" if terminated == "top" else "Top"
+            bottom_label = (
+                "Bottom (terminated)" if terminated == "bottom" else "Bottom"
+            )
+            ranks = state.get("terminated_ranks", [])
+            decimated = f" | Decimated: {', '.join(ranks)}" if ranks else ""
             return (
-                f"Top: {cards_text(state.get('top_board', []))} | "
-                f"Bottom: {cards_text(state.get('bottom_board', []))}"
+                f"{top_label}: {cards_text(state.get('top_board', []))} | "
+                f"{bottom_label}: {cards_text(state.get('bottom_board', []))}"
+                f"{decimated}"
             )
         return cards_text(state.get("board", []))
 
@@ -1211,6 +1230,7 @@ class MainMenuView(QWidget):
         self.game.addItem("Pot or Fold", "pof")
         self.game.addItem("Pineapple", "pineapple")
         self.game.addItem("Ultra Pineapple", "ultra_pineapple")
+        self.game.addItem("Terminator", "terminator")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.seats = ResponsiveSpinBox()
@@ -1253,6 +1273,12 @@ class MainMenuView(QWidget):
         self.ultra_pineapple_ante.setRange(0.01, 1_000_000_000)
         self.ultra_pineapple_ante.setValue(10)
         self.ultra_pineapple_ante.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
+        self.terminator_ante = ResponsiveDoubleSpinBox()
+        self.terminator_ante.setRange(0.01, 1_000_000_000)
+        self.terminator_ante.setValue(10)
+        self.terminator_ante.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
         self.pof_hole_cards = QWidget()
@@ -1309,6 +1335,7 @@ class MainMenuView(QWidget):
             "Ultra Pineapple ante",
             self.ultra_pineapple_ante,
         )
+        self.host_form.addRow("Terminator ante", self.terminator_ante)
         self.host_form.addRow("Hole cards", self.pof_hole_cards)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
@@ -1346,6 +1373,7 @@ class MainMenuView(QWidget):
         pof = self.game.currentData() == "pof"
         pineapple = self.game.currentData() == "pineapple"
         ultra_pineapple = self.game.currentData() == "ultra_pineapple"
+        terminator = self.game.currentData() == "terminator"
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
         self.host_form.setRowVisible(self.pof_ante, pof)
@@ -1354,6 +1382,7 @@ class MainMenuView(QWidget):
             self.ultra_pineapple_ante,
             ultra_pineapple,
         )
+        self.host_form.setRowVisible(self.terminator_ante, terminator)
         self.host_form.setRowVisible(self.pof_hole_cards, pof)
         self.host_form.setRowVisible(self.aof_multiplier, aof)
         self.host_form.setRowVisible(self.aof_run_twice, aof)
@@ -1363,7 +1392,8 @@ class MainMenuView(QWidget):
             and not aof
             and not pof
             and not pineapple
-            and not ultra_pineapple,
+            and not ultra_pineapple
+            and not terminator,
         )
         game = self.game.currentData()
         self.seats.setMaximum(
@@ -1401,6 +1431,8 @@ class MainMenuView(QWidget):
             config["ante"] = self.pineapple_ante.value()
         elif config["game"] == "ultra_pineapple":
             config["ante"] = self.ultra_pineapple_ante.value()
+        elif config["game"] == "terminator":
+            config["ante"] = self.terminator_ante.value()
         else:
             config["big_blind"] = self.big_blind.value()
         self.connect_requested.emit(

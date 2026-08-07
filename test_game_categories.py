@@ -2,6 +2,7 @@ from allocator import AllocatorGame
 from game_categories import BoardCategory
 from nlh import NoLimitHoldemGame
 from plo import PotLimitOmahaGame
+from terminator import TerminatorGame
 
 
 def test_nlh_is_a_single_board_game():
@@ -14,6 +15,10 @@ def test_plo_is_a_single_board_game():
 
 def test_allocator_is_a_double_board_game():
     assert AllocatorGame.board_category is BoardCategory.DOUBLE_BOARD
+
+
+def test_terminator_is_a_double_board_game():
+    assert TerminatorGame.board_category is BoardCategory.DOUBLE_BOARD
 
 
 def test_board_categories_have_protocol_friendly_values():

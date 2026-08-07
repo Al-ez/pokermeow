@@ -158,6 +158,8 @@ class MainWindow(QMainWindow):
             self.pages.table.set_chat_history(payload)
         elif event == "aof_discard_required":
             self._request_aof_discard(payload)
+        elif event == "terminator_board_required":
+            self._request_terminator_board(payload)
         elif event == "aof_discarded":
             if self._aof_dialog is not None:
                 self._aof_dialog.accept()
@@ -265,6 +267,21 @@ class MainWindow(QMainWindow):
         dialog.discarded.connect(self.controller.submit_aof_discard)
         self._aof_dialog = dialog
         dialog.show()
+
+    def _request_terminator_board(self, payload):
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Terminate a board")
+        dialog.setText("Choose the board whose ranks will be decimated.")
+        dialog.setInformativeText(
+            "Top: " + ", ".join(payload.get("top_board", []))
+            + "\nBottom: " + ", ".join(payload.get("bottom_board", []))
+        )
+        top_button = dialog.addButton("Terminate Top", QMessageBox.ButtonRole.DestructiveRole)
+        bottom_button = dialog.addButton("Terminate Bottom", QMessageBox.ButtonRole.DestructiveRole)
+        dialog.exec()
+        self.controller.submit_terminator_board(
+            "bottom" if dialog.clickedButton() is bottom_button else "top"
+        )
 
     def _request_new_name(self, message):
         name, accepted = QInputDialog.getText(

@@ -305,7 +305,7 @@ def ask_table_config():
         game_choice = prompt_input(
             "Choose game: [1] NLH  [2] PLO  [3] Allocator "
             "[4] Helicopter  [5] AOF  [6] POF  [7] Pineapple "
-            "[8] Ultra Pineapple: "
+            "[8] Ultra Pineapple  [9] Terminator: "
         ).strip()
         if game_choice == "1":
             game = "nlh"
@@ -331,7 +331,10 @@ def ask_table_config():
         if game_choice == "8":
             game = "ultra_pineapple"
             break
-        print("Please choose 1, 2, 3, 4, 5, 6, 7, or 8.")
+        if game_choice == "9":
+            game = "terminator"
+            break
+        print("Please choose a number from 1 to 9.")
 
     seat_cap = (
         10
@@ -375,7 +378,7 @@ def ask_table_config():
             "Bomb pot ante per player [10]: ",
             default=10,
         )
-    elif game == "ultra_pineapple":
+    elif game in {"ultra_pineapple", "terminator"}:
         config["ante"] = ask_positive_int(
             "Bomb pot ante per player [10]: ",
             default=10,
@@ -722,6 +725,17 @@ class PokerClient:
                     "type": "aof_discard",
                     "card_index": card_index,
                 },
+            )
+
+        elif message_type == "request_terminator_board":
+            print("\nTop board:", show_cards(message.get("top_board", [])))
+            print("Bottom board:", show_cards(message.get("bottom_board", [])))
+            choice = prompt_input("Terminate top or bottom? [top]: ").strip().lower()
+            if choice not in {"top", "bottom"}:
+                choice = "top"
+            send_json(
+                file_obj,
+                {"type": "terminator_board_choice", "board": choice},
             )
 
         elif message_type == "error":
