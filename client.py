@@ -360,6 +360,25 @@ def ask_table_config():
 
     if game in {"allocator", "helicopter"}:
         config["bomb_pot_ante"] = ask_positive_int("Bomb pot ante per player [10]: ", default=10)
+    elif game == "plo":
+        config["big_blind"] = ask_positive_int("Big blind [2]: ", default=2)
+        cards = ask_positive_int("Cards [4/5/6, default 4]: ", default=4)
+        while cards not in {4, 5, 6}:
+            print("Cards must be 4, 5, or 6.")
+            cards = ask_positive_int("Cards [4/5/6, default 4]: ", default=4)
+        boards = ask_positive_int("Boards [1/2, default 1]: ", default=1)
+        while boards not in {1, 2}:
+            print("Boards must be 1 or 2.")
+            boards = ask_positive_int("Boards [1/2, default 1]: ", default=1)
+        config["hole_cards"] = cards
+        config["boards"] = boards
+        mode = prompt_input("Mode [preflop/bomb pot, default preflop]: ").strip().lower()
+        config["mode"] = "bomb_pot" if mode in {"bomb pot", "bomb_pot"} else "preflop"
+        if config["mode"] == "bomb_pot":
+            config["ante_bb"] = ask_positive_int(
+                "Ante (in BB) [1]: ",
+                default=1,
+            )
     elif game == "pof":
         config["ante"] = ask_positive_int("Ante per player [10]: ", default=10)
         hole_cards = ask_positive_int(

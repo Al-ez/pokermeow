@@ -1345,6 +1345,56 @@ class MainMenuView(QWidget):
             self.pof_hole_card_buttons[count] = button
             hole_cards_layout.addWidget(button)
         self.pof_hole_card_buttons[6].setChecked(True)
+        self.plo_hole_cards = QWidget()
+        plo_cards_layout = QHBoxLayout(self.plo_hole_cards)
+        plo_cards_layout.setContentsMargins(0, 0, 0, 0)
+        plo_cards_layout.setSpacing(6)
+        self.plo_hole_cards_group = QButtonGroup(self)
+        self.plo_hole_cards_group.setExclusive(True)
+        self.plo_hole_card_buttons = {}
+        for count in (4, 5, 6):
+            button = ResponsiveChoiceButton(str(count))
+            button.setCheckable(True)
+            self.plo_hole_cards_group.addButton(button, count)
+            self.plo_hole_card_buttons[count] = button
+            plo_cards_layout.addWidget(button)
+        self.plo_hole_card_buttons[4].setChecked(True)
+
+        self.plo_boards = QWidget()
+        plo_boards_layout = QHBoxLayout(self.plo_boards)
+        plo_boards_layout.setContentsMargins(0, 0, 0, 0)
+        plo_boards_layout.setSpacing(6)
+        self.plo_boards_group = QButtonGroup(self)
+        self.plo_boards_group.setExclusive(True)
+        self.plo_board_buttons = {}
+        for count in (1, 2):
+            button = ResponsiveChoiceButton(str(count))
+            button.setCheckable(True)
+            self.plo_boards_group.addButton(button, count)
+            self.plo_board_buttons[count] = button
+            plo_boards_layout.addWidget(button)
+        self.plo_board_buttons[1].setChecked(True)
+
+        self.plo_mode = QWidget()
+        plo_mode_layout = QHBoxLayout(self.plo_mode)
+        plo_mode_layout.setContentsMargins(0, 0, 0, 0)
+        plo_mode_layout.setSpacing(6)
+        self.plo_mode_group = QButtonGroup(self)
+        self.plo_mode_group.setExclusive(True)
+        self.plo_mode_buttons = {}
+        for identifier, label in ((0, "Preflop"), (1, "Bomb pot")):
+            button = ResponsiveChoiceButton(label)
+            button.setCheckable(True)
+            self.plo_mode_group.addButton(button, identifier)
+            self.plo_mode_buttons[label.lower().replace(" ", "_")] = button
+            plo_mode_layout.addWidget(button)
+        self.plo_mode_buttons["preflop"].setChecked(True)
+        self.plo_ante_bb = ResponsiveSpinBox()
+        self.plo_ante_bb.setRange(1, 1_000_000)
+        self.plo_ante_bb.setValue(1)
+        self.plo_ante_bb.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+        )
         self.aof_multiplier = QWidget()
         multiplier_layout = QHBoxLayout(self.aof_multiplier)
         multiplier_layout.setContentsMargins(0, 0, 0, 0)
@@ -1387,6 +1437,10 @@ class MainMenuView(QWidget):
         )
         self.host_form.addRow("Terminator ante", self.terminator_ante)
         self.host_form.addRow("Hole cards", self.pof_hole_cards)
+        self.host_form.addRow("Cards", self.plo_hole_cards)
+        self.host_form.addRow("Boards", self.plo_boards)
+        self.host_form.addRow("Mode", self.plo_mode)
+        self.host_form.addRow("Ante (in BB)", self.plo_ante_bb)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
         root.addWidget(self.host_box)
@@ -1411,6 +1465,12 @@ class MainMenuView(QWidget):
             lambda: self._submit(self.mode)
         )
         self.game.currentIndexChanged.connect(self._game_changed)
+        for button in (
+            list(self.plo_hole_card_buttons.values())
+            + list(self.plo_board_buttons.values())
+            + list(self.plo_mode_buttons.values())
+        ):
+            button.clicked.connect(lambda checked=False: self._game_changed())
         self._set_mode("create")
         self._game_changed()
 
@@ -1421,6 +1481,7 @@ class MainMenuView(QWidget):
         allocator = self.game.currentData() in {"allocator", "helicopter"}
         aof = self.game.currentData() == "aof"
         pof = self.game.currentData() == "pof"
+        plo = self.game.currentData() == "plo"
         pineapple = self.game.currentData() == "pineapple"
         ultra_pineapple = self.game.currentData() == "ultra_pineapple"
         terminator = self.game.currentData() == "terminator"
@@ -1434,6 +1495,13 @@ class MainMenuView(QWidget):
         )
         self.host_form.setRowVisible(self.terminator_ante, terminator)
         self.host_form.setRowVisible(self.pof_hole_cards, pof)
+        self.host_form.setRowVisible(self.plo_hole_cards, plo)
+        self.host_form.setRowVisible(self.plo_boards, plo)
+        self.host_form.setRowVisible(self.plo_mode, plo)
+        self.host_form.setRowVisible(
+            self.plo_ante_bb,
+            plo and self.plo_mode_group.checkedId() == 1,
+        )
         self.host_form.setRowVisible(self.aof_multiplier, aof)
         self.host_form.setRowVisible(self.aof_run_twice, aof)
         self.host_form.setRowVisible(
@@ -1446,11 +1514,18 @@ class MainMenuView(QWidget):
             and not terminator,
         )
         game = self.game.currentData()
-        self.seats.setMaximum(
-            10
-            if game in {"nlh", "pineapple"}
-            else (6 if game == "helicopter" else 7)
-        )
+        if game == "plo":
+            cards = self.plo_hole_cards_group.checkedId()
+            boards = self.plo_boards_group.checkedId()
+            community_cards = 8 if boards == 1 else 13
+            seat_cap = min(10, (52 - community_cards) // cards)
+        elif game in {"nlh", "pineapple"}:
+            seat_cap = 10
+        elif game == "helicopter":
+            seat_cap = 6
+        else:
+            seat_cap = 7
+        self.seats.setMaximum(seat_cap)
 
     def _set_mode(self, mode):
         self.mode = mode
@@ -1477,6 +1552,16 @@ class MainMenuView(QWidget):
         elif config["game"] == "pof":
             config["ante"] = self.pof_ante.value()
             config["hole_cards"] = self.pof_hole_cards_group.checkedId()
+        elif config["game"] == "plo":
+            config["big_blind"] = self.big_blind.value()
+            config["hole_cards"] = self.plo_hole_cards_group.checkedId()
+            config["boards"] = self.plo_boards_group.checkedId()
+            config["mode"] = (
+                "bomb_pot" if self.plo_mode_group.checkedId() == 1
+                else "preflop"
+            )
+            if config["mode"] == "bomb_pot":
+                config["ante_bb"] = self.plo_ante_bb.value()
         elif config["game"] == "pineapple":
             config["ante"] = self.pineapple_ante.value()
         elif config["game"] == "ultra_pineapple":

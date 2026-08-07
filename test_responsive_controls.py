@@ -8,6 +8,7 @@ from pokermeow_gui.views import (
     MainMenuView,
     ResponsiveChoiceButton,
     ResponsiveDoubleSpinBox,
+    ResponsiveSpinBox,
 )
 
 
@@ -59,6 +60,32 @@ def test_pof_creation_exposes_hole_cards_ante_and_existing_buy_in():
     assert menu.pof_ante.isVisibleTo(menu.host_box)
     assert menu.buy_in.isVisibleTo(menu)
     assert not menu.aof_run_twice.isVisibleTo(menu.host_box)
+
+
+def test_plo_creation_exposes_cards_boards_and_big_blind():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    menu.game.setCurrentIndex(menu.game.findData("plo"))
+    app.processEvents()
+
+    assert set(menu.plo_hole_card_buttons) == {4, 5, 6}
+    assert set(menu.plo_board_buttons) == {1, 2}
+    assert set(menu.plo_mode_buttons) == {"preflop", "bomb_pot"}
+    assert menu.plo_hole_cards_group.checkedId() == 4
+    assert menu.plo_boards_group.checkedId() == 1
+    assert menu.plo_mode_group.checkedId() == 0
+    assert menu.plo_hole_cards.isVisibleTo(menu.host_box)
+    assert menu.plo_boards.isVisibleTo(menu.host_box)
+    assert menu.plo_mode.isVisibleTo(menu.host_box)
+    assert menu.big_blind.isVisibleTo(menu.host_box)
+    assert menu.seats.maximum() == 10
+    assert not menu.plo_ante_bb.isVisibleTo(menu.host_box)
+
+    menu.plo_mode_buttons["bomb_pot"].click()
+    app.processEvents()
+
+    assert menu.plo_ante_bb.isVisibleTo(menu.host_box)
+    assert isinstance(menu.plo_ante_bb, ResponsiveSpinBox)
 
 
 def test_pineapple_creation_exposes_ante_and_existing_buy_in():

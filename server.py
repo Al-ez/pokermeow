@@ -425,6 +425,10 @@ class PokerTableSession:
         aof_allow_run_twice=False,
         pof_ante=0,
         pof_hole_cards=6,
+        plo_hole_cards=4,
+        plo_boards=1,
+        plo_mode="preflop",
+        plo_ante_bb=1,
         pineapple_ante=0,
         ultra_pineapple_ante=0,
         terminator_ante=0,
@@ -441,6 +445,10 @@ class PokerTableSession:
         self.aof_allow_run_twice = bool(aof_allow_run_twice)
         self.pof_ante = pof_ante
         self.pof_hole_cards = pof_hole_cards
+        self.plo_hole_cards = plo_hole_cards
+        self.plo_boards = plo_boards
+        self.plo_mode = plo_mode
+        self.plo_ante_bb = plo_ante_bb
         self.pineapple_ante = pineapple_ante
         self.ultra_pineapple_ante = ultra_pineapple_ante
         self.terminator_ante = terminator_ante
@@ -818,6 +826,17 @@ class PokerTableSession:
                 multiplier=self.aof_multiplier,
                 shuffle=True,
             )
+        elif self.game_class is PotLimitOmahaGame:
+            self.game = self.game_class(
+                player_stacks,
+                small_blind=self.small_blind,
+                big_blind=self.big_blind,
+                hole_cards=self.plo_hole_cards,
+                boards=self.plo_boards,
+                mode=self.plo_mode,
+                ante_bb=self.plo_ante_bb,
+                shuffle=True,
+            )
         elif self.game_class is UltraPineappleGame:
             self.game = self.game_class(
                 player_stacks,
@@ -939,7 +958,13 @@ class PokerTableSession:
                 self._run_betting_round(seated_clients)
                 if len(self.game.active_players()) > 1:
                     runout_boards = self._deal_all_in_runout(seated_clients)
-            elif not issubclass(self.game_class, AllocatorGame):
+            elif (
+                not issubclass(self.game_class, AllocatorGame)
+                and not (
+                    self.game_class is PotLimitOmahaGame
+                    and self.game.mode == "bomb_pot"
+                )
+            ):
                 self._run_betting_round(seated_clients)
 
             if (
@@ -1058,6 +1083,30 @@ class PokerTableSession:
                     player.name: " / ".join(
                         scores[player.name][3]
                         for scores in board_scores
+                    )
+                    for player in self.game.players
+                    if not player.folded
+                }
+                winner_hand_names = {
+                    winner: player_hand_names[winner]
+                    for winner in result.winners
+                }
+                allocator_details = None
+            elif (
+                self.game_class is PotLimitOmahaGame
+                and self.game.board_count == 2
+            ):
+                board_scores = [
+                    {
+                        player.name: self.game._score_hand(player.hand, board)
+                        for player in self.game.players
+                        if not player.folded
+                    }
+                    for board in (self.game.top_board, self.game.bottom_board)
+                ]
+                player_hand_names = {
+                    player.name: " / ".join(
+                        scores[player.name][3] for scores in board_scores
                     )
                     for player in self.game.players
                     if not player.folded
@@ -2644,7 +2693,7 @@ class NetworkPokerServer:
         max_seats = self._parse_int(message.get("max_seats"), "Number of seats")
         seat_cap = (
             10
-            if game_class in {NoLimitHoldemGame, PineappleGame}
+            if game_class in {NoLimitHoldemGame, PineappleGame, PotLimitOmahaGame}
             else (6 if game_class is HelicopterGame else 7)
         )
         if max_seats < 2 or max_seats > seat_cap:
@@ -2656,10 +2705,39 @@ class NetworkPokerServer:
         aof_allow_run_twice = False
         pof_ante = 0
         pof_hole_cards = 6
+        plo_hole_cards = 4
+        plo_boards = 1
+        plo_mode = "preflop"
+        plo_ante_bb = 1
         pineapple_ante = 0
         ultra_pineapple_ante = 0
         terminator_ante = 0
-        if game_class is PotOrFoldGame:
+        if game_class is PotLimitOmahaGame:
+            big_blind = parse_money(message.get("big_blind"), "Big blind")
+            small_blind = big_blind / Decimal("2")
+            plo_hole_cards = self._parse_int(message.get("hole_cards"), "Cards")
+            plo_boards = self._parse_int(message.get("boards"), "Boards")
+            plo_mode = str(message.get("mode", "preflop")).lower()
+            if plo_hole_cards not in PotLimitOmahaGame.ALLOWED_HOLE_CARDS:
+                raise RuntimeError("PLO cards must be 4, 5, or 6")
+            if plo_boards not in PotLimitOmahaGame.ALLOWED_BOARDS:
+                raise RuntimeError("PLO boards must be 1 or 2")
+            if plo_mode not in PotLimitOmahaGame.ALLOWED_MODES:
+                raise RuntimeError("PLO mode must be preflop or bomb_pot")
+            if plo_mode == "bomb_pot":
+                plo_ante_bb = self._parse_int(
+                    message.get("ante_bb"),
+                    "Ante (in BB)",
+                )
+                if plo_ante_bb <= 0:
+                    raise RuntimeError("Ante (in BB) must be greater than zero")
+            community_cards = 8 if plo_boards == 1 else 13
+            deck_seat_cap = (52 - community_cards) // plo_hole_cards
+            if max_seats > deck_seat_cap:
+                raise RuntimeError(
+                    f"This PLO configuration supports at most {deck_seat_cap} seats"
+                )
+        elif game_class is PotOrFoldGame:
             pof_ante = parse_money(message.get("ante"), "Ante")
             pof_hole_cards = self._parse_int(
                 message.get("hole_cards"),
@@ -2727,6 +2805,10 @@ class NetworkPokerServer:
             aof_allow_run_twice=aof_allow_run_twice,
             pof_ante=pof_ante,
             pof_hole_cards=pof_hole_cards,
+            plo_hole_cards=plo_hole_cards,
+            plo_boards=plo_boards,
+            plo_mode=plo_mode,
+            plo_ante_bb=plo_ante_bb,
             pineapple_ante=pineapple_ante,
             ultra_pineapple_ante=ultra_pineapple_ante,
             terminator_ante=terminator_ante,
