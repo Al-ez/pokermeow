@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from allocator import AllocatorGame
+from terminator import TerminatorGame
 from aof import AOFGame
 from helicopter import HelicopterGame
 from nlh import NoLimitHoldemGame
@@ -97,6 +98,18 @@ def test_allocator_showdown_timing_distinguishes_uncontested_pots():
     assert session._showdown_display_seconds(
         SimpleNamespace(hand_name="allocator score")
     ) == 15
+
+
+def test_terminator_uses_five_second_contested_showdown():
+    session = make_session()
+    session.game_class = TerminatorGame
+
+    assert session._showdown_display_seconds(
+        SimpleNamespace(hand_name="one pair")
+    ) == 5
+    assert session._showdown_display_seconds(
+        SimpleNamespace(hand_name="uncontested")
+    ) == 2
 
 
 def test_allocator_and_helicopter_request_and_lock_player_allocations():

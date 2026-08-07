@@ -2264,6 +2264,8 @@ class PokerTableSession:
             return 2
         if issubclass(self.game_class, AllocatorGame):
             return 15
+        if self.game_class is TerminatorGame:
+            return 5
         if self.game.board_category is BoardCategory.DOUBLE_BOARD:
             return 10
         return TIMEOUTS["showdown_display"]
