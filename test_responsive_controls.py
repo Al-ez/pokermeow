@@ -78,6 +78,7 @@ def test_plo_creation_exposes_cards_boards_and_big_blind():
     assert menu.plo_boards.isVisibleTo(menu.host_box)
     assert menu.plo_mode.isVisibleTo(menu.host_box)
     assert menu.big_blind.isVisibleTo(menu.host_box)
+    assert menu.big_blind.value() == 2
     assert menu.seats.maximum() == 10
     assert not menu.plo_ante_bb.isVisibleTo(menu.host_box)
 
@@ -137,3 +138,20 @@ def test_home_screen_has_top_right_settings_gear():
     assert menu.settings_button.x() > menu.width() / 2
     menu.settings_button.click()
     assert requested == [True]
+
+
+def test_all_game_forms_keep_nlh_viewport_and_overflow_scrolls():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    menu.resize(1020, 650)
+    menu.show()
+    app.processEvents()
+    nlh_height = menu.host_scroll.height()
+
+    menu.game.setCurrentIndex(menu.game.findData("plo"))
+    menu.plo_mode_buttons["bomb_pot"].click()
+    app.processEvents()
+
+    assert menu.host_scroll.height() == nlh_height
+    assert menu.host_scroll.verticalScrollBar().maximum() > 0
+    assert menu.host_scroll.horizontalScrollBar().maximum() == 0

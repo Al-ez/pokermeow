@@ -14,9 +14,11 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QGraphicsOpacityEffect,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QStackedWidget,
     QTextEdit,
@@ -124,6 +126,11 @@ class ResponsiveSpinBox(_ResponsiveTextMixin, QSpinBox):
         super().showEvent(event)
         self._fit_text(self.text())
 
+    def wheelEvent(self, event):
+        # These controls live in a scrollable form. Do not silently change a
+        # wager while the user is trying to scroll through game settings.
+        event.ignore()
+
 
 class ResponsiveDoubleSpinBox(_ResponsiveTextMixin, QDoubleSpinBox):
     def __init__(self, parent=None):
@@ -137,6 +144,9 @@ class ResponsiveDoubleSpinBox(_ResponsiveTextMixin, QDoubleSpinBox):
     def showEvent(self, event):
         super().showEvent(event)
         self._fit_text(self.text())
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class ResponsiveChoiceButton(_ResponsiveTextMixin, QPushButton):
@@ -709,6 +719,7 @@ class PokerTableDisplay(QWidget):
         self.action_widgets = {}
         self.bet_widgets = {}
         self.dealer_widgets = {}
+        self.special_game_widgets = {}
         self.player_seats = {}
         self.display_order = []
         self.pickable_seats = set()
@@ -775,6 +786,16 @@ class PokerTableDisplay(QWidget):
             )
             dealer_badge.setVisible(False)
             self.dealer_widgets[seat_number] = dealer_badge
+            special_badge = QLabel("SG", self)
+            special_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            special_badge.setToolTip("Orbital special-game button")
+            special_badge.setStyleSheet(
+                "background: #7c3aed; color: white;"
+                "border: 1px solid #c4b5fd; border-radius: 10px;"
+                "font-size: 10px; font-weight: 900; padding: 0;"
+            )
+            special_badge.setVisible(False)
+            self.special_game_widgets[seat_number] = special_badge
 
         self.run_it_prompt = QFrame(self.felt)
         self.run_it_prompt.setObjectName("runItPrompt")
@@ -905,6 +926,7 @@ class PokerTableDisplay(QWidget):
             self.action_widgets[seat_number].clear()
             self.bet_widgets[seat_number].set_amount(0)
             self.dealer_widgets[seat_number].setVisible(False)
+            self.special_game_widgets[seat_number].setVisible(False)
             if seat.get("player"):
                 self.player_seats[seat["player"]] = seat_number
         self._layout_table()
@@ -925,6 +947,9 @@ class PokerTableDisplay(QWidget):
             ]
         players = state.get("players", {})
         dealer = state.get("dealer")
+        special_button_player = (
+            table.get("special_button_player") if table else None
+        )
         self.player_seats = {}
         self.pot_label.setText(f"Pot: {state.get('pot', 0)}")
         deck_size = state.get("deck_size")
@@ -960,6 +985,9 @@ class PokerTableDisplay(QWidget):
             )
             self.dealer_widgets[seat_number].setVisible(
                 bool(name and name == dealer)
+            )
+            self.special_game_widgets[seat_number].setVisible(
+                bool(name and name == special_button_player)
             )
             if name:
                 self.player_seats[name] = seat_number
@@ -1120,6 +1148,7 @@ class PokerTableDisplay(QWidget):
             )
             self.bet_widgets[seat_number].setVisible(False)
             self.dealer_widgets[seat_number].setVisible(False)
+            self.special_game_widgets[seat_number].setVisible(False)
 
     def _layout_table(self, force=False):
         layout_key = (
@@ -1211,6 +1240,13 @@ class PokerTableDisplay(QWidget):
                 self._toward_center(seat_x, 0.48),
                 self._toward_center(seat_y, 0.48),
                 22,
+                22,
+            )
+            self._place_widget(
+                self.special_game_widgets[seat_number],
+                self._toward_center(seat_x, 0.38),
+                self._toward_center(seat_y, 0.38),
+                30,
                 22,
             )
         self._position_termination_counts()
@@ -1345,6 +1381,7 @@ class MainMenuView(QWidget):
 
         self.host_box = QGroupBox("New table settings")
         self.host_form = QFormLayout(self.host_box)
+        self.host_form.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.game = QComboBox()
         self.game.addItem("No-Limit Texas Hold'em", "nlh")
         self.game.addItem("Pot-Limit Omaha", "plo")
@@ -1356,6 +1393,21 @@ class MainMenuView(QWidget):
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
         self.game.addItem("ESG (Extremely Stupid Game)", "esg")
+        self.orbital_special = QWidget()
+        orbital_layout = QHBoxLayout(self.orbital_special)
+        orbital_layout.setContentsMargins(0, 0, 0, 0)
+        orbital_layout.setSpacing(6)
+        self.orbital_special_group = QButtonGroup(self)
+        self.orbital_special_group.setExclusive(True)
+        self.orbital_special_off = ResponsiveChoiceButton("Off")
+        self.orbital_special_on = ResponsiveChoiceButton("On")
+        for value, button in enumerate(
+            (self.orbital_special_off, self.orbital_special_on)
+        ):
+            button.setCheckable(True)
+            self.orbital_special_group.addButton(button, value)
+            orbital_layout.addWidget(button)
+        self.orbital_special_off.setChecked(True)
         self.seats = ResponsiveSpinBox()
         self.seats.setRange(2, 10)
         self.seats.setValue(6)
@@ -1364,6 +1416,8 @@ class MainMenuView(QWidget):
         )
         self.big_blind = ResponsiveDoubleSpinBox()
         self.big_blind.setRange(0.01, 1_000_000_000)
+        self.big_blind.setDecimals(2)
+        self.big_blind.setSingleStep(1)
         self.big_blind.setValue(2)
         self.big_blind.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons
@@ -1498,6 +1552,7 @@ class MainMenuView(QWidget):
         self.aof_run_twice_group.addButton(self.aof_run_twice_yes, 1)
         self.aof_run_twice_no.setChecked(True)
         self.host_form.addRow("Game", self.game)
+        self.host_form.addRow("Extra special game", self.orbital_special)
         self.host_form.addRow("Seats", self.seats)
         self.host_form.addRow("Big blind", self.big_blind)
         self.host_form.addRow("Ante", self.bomb_ante)
@@ -1516,7 +1571,18 @@ class MainMenuView(QWidget):
         self.host_form.addRow("Ante (in BB)", self.plo_ante_bb)
         self.host_form.addRow("Multiplier", self.aof_multiplier)
         self.host_form.addRow("Allow run twice?", self.aof_run_twice)
-        root.addWidget(self.host_box)
+        self.host_scroll = QScrollArea()
+        self.host_scroll.setObjectName("gameConfigScroll")
+        self.host_scroll.setWidgetResizable(True)
+        self.host_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.host_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.host_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.host_scroll.setWidget(self.host_box)
+        root.addWidget(self.host_scroll)
 
         self.connect_button = QPushButton("Host Game")
         self.connect_button.setObjectName("primary")
@@ -1546,6 +1612,10 @@ class MainMenuView(QWidget):
             button.clicked.connect(lambda checked=False: self._game_changed())
         self._set_mode("create")
         self._game_changed()
+        # NLH defines the stable configuration viewport. Games with more
+        # options scroll inside it instead of changing the home-screen layout.
+        self._game_config_viewport_height = self.host_box.sizeHint().height() + 4
+        self.host_scroll.setFixedHeight(self._game_config_viewport_height)
 
     def set_status(self, text):
         self.status.setText(text)
@@ -1558,6 +1628,8 @@ class MainMenuView(QWidget):
         pineapple = self.game.currentData() == "pineapple"
         ultra_pineapple = self.game.currentData() == "ultra_pineapple"
         terminator = self.game.currentData() == "terminator"
+        orbital_supported = self.game.currentData() in {"nlh", "plo"}
+        self.host_form.setRowVisible(self.orbital_special, orbital_supported)
         self.host_form.setRowVisible(self.bomb_ante, allocator)
         self.host_form.setRowVisible(self.aof_ante, aof)
         self.host_form.setRowVisible(self.pof_ante, pof)
@@ -1606,7 +1678,7 @@ class MainMenuView(QWidget):
         self.host_mode_button.setChecked(hosting)
         self.join_mode_button.setChecked(not hosting)
         self.connection_form.setRowVisible(self.table_id, not hosting)
-        self.host_box.setVisible(hosting)
+        self.host_scroll.setVisible(hosting)
         self.connect_button.setText("Host Game" if hosting else "Join Game")
 
     def _submit(self, mode):
@@ -1614,6 +1686,8 @@ class MainMenuView(QWidget):
             "game": self.game.currentData(),
             "max_seats": self.seats.value(),
         }
+        if config["game"] in {"nlh", "plo"}:
+            config["orbital_special"] = self.orbital_special_group.checkedId() == 1
         if config["game"] in {"allocator", "helicopter"}:
             config["bomb_pot_ante"] = self.bomb_ante.value()
         elif config["game"] == "aof":

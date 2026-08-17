@@ -425,6 +425,10 @@ def ask_table_config():
     else:
         config["big_blind"] = ask_blinds()
 
+    if game in {"nlh", "plo"}:
+        orbital = prompt_input("Enable orbital special game? [y/N]: ").strip().lower()
+        config["orbital_special"] = orbital in {"y", "yes"}
+
     return config
 
 
@@ -712,6 +716,54 @@ class PokerClient:
                     "amount": amount,
                 },
             )
+
+        elif message_type == "request_orbital_special_selection":
+            print("\nSG button reached. Choose the orbital special game.")
+            special_game = prompt_input(
+                "Game [nlh/plo/aof/pof/pineapple/ultra_pineapple/"
+                "terminator/allocator/helicopter/esg, default nlh]: "
+            ).strip().lower() or "nlh"
+            quota = ask_positive_int(
+                "Player quota: ",
+                default=int(message.get("available_players", 2)),
+            )
+            send_json(
+                file_obj,
+                {
+                    "type": "orbital_special_selection",
+                    "config": {
+                        "game": special_game,
+                        "max_players": quota,
+                        "big_blind": message.get("big_blind", 2),
+                        "ante": 10,
+                        "hole_cards": 4,
+                        "boards": 1,
+                        "mode": "preflop",
+                        "ante_bb": 1,
+                        "multiplier": 10,
+                        "allow_run_twice": False,
+                    },
+                },
+            )
+
+        elif message_type == "request_orbital_special_vote":
+            special_config = message.get("config", {})
+            print(f"\nOrbital special game: {special_config}")
+            print(
+                f"Players joined: {message.get('joined', 1)}/"
+                f"{message.get('quota', 2)}"
+            )
+            answer = prompt_input("Play? [Y/n]: ").strip().lower()
+            send_json(
+                file_obj,
+                {
+                    "type": "orbital_special_vote",
+                    "play": answer not in {"n", "no"},
+                },
+            )
+
+        elif message_type == "orbital_special_full":
+            print(message.get("message", "Max players reached. Auto sit-out."))
 
         elif message_type == "request_allocator_allocation":
             top, bottom, hand = ask_allocator_allocation(

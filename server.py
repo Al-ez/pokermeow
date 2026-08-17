@@ -253,6 +253,19 @@ class Table:
                 if seat is not None and not seat.reserved
             }
 
+    def player_stacks_for(self, clients):
+        names = {client.name for client in clients}
+        with self.lock:
+            return {
+                seat.client.name: seat.stack
+                for seat in self.seats
+                if (
+                    seat is not None
+                    and not seat.reserved
+                    and seat.client.name in names
+                )
+            }
+
     def client_by_name(self, name):
         target_name = name.lower()
         with self.lock:
@@ -433,6 +446,7 @@ class PokerTableSession:
         pineapple_ante=0,
         ultra_pineapple_ante=0,
         terminator_ante=0,
+        orbital_special=False,
         shutdown_event=None,
     ):
         self.table_id = table_id
@@ -453,6 +467,7 @@ class PokerTableSession:
         self.pineapple_ante = pineapple_ante
         self.ultra_pineapple_ante = ultra_pineapple_ante
         self.terminator_ante = terminator_ante
+        self.orbital_special = bool(orbital_special)
         self.table = Table(max_seats)
         self.all_clients = []
         self.all_clients_lock = threading.Lock()
@@ -463,6 +478,8 @@ class PokerTableSession:
         self.chat_messages = deque(maxlen=30)
         self.chat_lock = threading.Lock()
         self.dealer_index = 0
+        self.special_button_seat = None
+        self._special_orbit_armed = self.orbital_special
         self.shutdown_event = shutdown_event or threading.Event()
 
     def run(self):
@@ -504,7 +521,87 @@ class PokerTableSession:
                 self.shutdown_event.wait(2)
                 continue
 
+            self._ensure_special_button()
+            dealer_name = self._scheduled_dealer_name()
+            dealer_seat = self._seat_number_for_name(dealer_name)
+            collision = bool(
+                self.orbital_special
+                and self._special_orbit_armed
+                and dealer_seat == self.special_button_seat
+            )
+            if (
+                self.orbital_special
+                and dealer_seat != self.special_button_seat
+            ):
+                self._special_orbit_armed = True
+
             self._play_hand()
+            if collision and not self.shutdown_event.is_set():
+                next_dealer = self._scheduled_dealer_name()
+                self._run_orbital_special(dealer_name)
+                next_seat = self._next_occupied_seat(self.special_button_seat)
+                self.special_button_seat = next_seat
+                self._set_scheduled_dealer(next_dealer)
+                self._special_orbit_armed = False
+                self._broadcast_table_status()
+
+    def _active_seat_entries(self):
+        with self.table.lock:
+            return [
+                (index + 1, seat)
+                for index, seat in enumerate(self.table.seats)
+                if seat is not None and not seat.reserved
+            ]
+
+    def _scheduled_dealer_name(self):
+        entries = self._active_seat_entries()
+        if not entries:
+            return None
+        return entries[self.dealer_index % len(entries)][1].client.name
+
+    def _set_scheduled_dealer(self, name):
+        entries = self._active_seat_entries()
+        self.dealer_index = next(
+            (
+                index
+                for index, (_seat_number, seat) in enumerate(entries)
+                if seat.client.name == name
+            ),
+            0,
+        )
+
+    def _seat_number_for_name(self, name):
+        return next(
+            (
+                seat_number
+                for seat_number, seat in self._active_seat_entries()
+                if seat.client.name == name
+            ),
+            None,
+        )
+
+    def _ensure_special_button(self):
+        if not self.orbital_special:
+            return
+        occupied = [number for number, _seat in self._active_seat_entries()]
+        if not occupied:
+            self.special_button_seat = None
+            return
+        if self.special_button_seat in occupied:
+            return
+        dealer_seat = self._seat_number_for_name(self._scheduled_dealer_name())
+        dealer_position = occupied.index(dealer_seat)
+        self.special_button_seat = occupied[dealer_position - 1]
+        self._broadcast_table_status()
+
+    def _next_occupied_seat(self, seat_number):
+        occupied = [number for number, _seat in self._active_seat_entries()]
+        if not occupied:
+            return None
+        for number in occupied:
+            if number > (seat_number or 0):
+                return number
+        return occupied[0]
 
     def stop(self):
         self.shutdown_event.set()
@@ -555,7 +652,18 @@ class PokerTableSession:
         status = self.table.table_status()
         status["table_id"] = self.table_id
         status["game"] = self.game_name
+        status["orbital_special"] = self.orbital_special
+        status["special_button_player"] = self._special_button_player()
         return status
+
+    def _special_button_player(self):
+        if not self.orbital_special or self.special_button_seat is None:
+            return None
+        index = self.special_button_seat - 1
+        if index < 0 or index >= len(self.table.seats):
+            return None
+        seat = self.table.seats[index]
+        return seat.client.name if seat is not None and not seat.reserved else None
 
     def _broadcast_table_status(self):
         message = {"type": "table", "table": self._table_status()}
@@ -815,14 +923,23 @@ class PokerTableSession:
                     }
                 )
 
-    def _play_hand(self):
+    def _play_hand(
+        self,
+        seated_clients_override=None,
+        dealer_name_override=None,
+        advance_dealer=True,
+    ):
         if self.shutdown_event.is_set():
             return
 
         self.table.mark_hand_started()
         self.current_hand_history = []
-        seated_clients = self.table.seated_clients()
-        player_stacks = self.table.seated_player_stacks()
+        seated_clients = (
+            list(seated_clients_override)
+            if seated_clients_override is not None
+            else self.table.seated_clients()
+        )
+        player_stacks = self.table.player_stacks_for(seated_clients)
 
         if self.game_class is AOFGame:
             self.game = self.game_class(
@@ -888,6 +1005,15 @@ class PokerTableSession:
                 small_blind=self.small_blind,
                 big_blind=self.big_blind,
                 shuffle=True,
+            )
+        if dealer_name_override:
+            self.dealer_index = next(
+                (
+                    index
+                    for index, player in enumerate(self.game.players)
+                    if player.name == dealer_name_override
+                ),
+                self.dealer_index,
             )
         self.dealer_index %= len(self.game.players)
         self.game.dealer_index = self.dealer_index
@@ -976,6 +1102,7 @@ class PokerTableSession:
                     self.game_class is PotLimitOmahaGame
                     and self.game.mode == "bomb_pot"
                 )
+
             ):
                 self._run_betting_round(seated_clients)
 
@@ -1325,11 +1452,207 @@ class PokerTableSession:
                 if client not in leaving_clients
             ]
             self._offer_rebuys(busted_clients)
-            self.dealer_index = (self.game.dealer_index + 1) % len(self.game.players)
+            if advance_dealer:
+                self.dealer_index = (
+                    self.game.dealer_index + 1
+                ) % len(self.game.players)
         finally:
             self.table.mark_hand_finished()
             if not self.shutdown_event.is_set():
                 self._activate_reserved_and_offer_waiting_list()
+
+    def _run_orbital_special(self, dealer_name):
+        seated_clients = self.table.seated_clients()
+        dealer = self.table.client_by_name(dealer_name)
+        if dealer is None or dealer not in seated_clients or not dealer.connected:
+            self._broadcast_hand_message(
+                seated_clients,
+                "Orbital special game skipped because the dealer is unavailable.",
+            )
+            return
+
+        dealer.send(
+            {
+                "type": "request_orbital_special_selection",
+                "available_players": len(seated_clients),
+                "big_blind": self.big_blind,
+            }
+        )
+        message = dealer.recv(self.shutdown_event)
+        if not message or message.get("type") != "orbital_special_selection":
+            self._broadcast_hand_message(seated_clients, "Special game selection cancelled.")
+            return
+
+        try:
+            config = self._normalize_orbital_config(
+                message.get("config", {}),
+                len(seated_clients),
+            )
+        except (RuntimeError, ValueError) as error:
+            dealer.send({"type": "error", "message": str(error)})
+            self._broadcast_hand_message(seated_clients, "Invalid special game selection.")
+            return
+
+        quota = config["max_players"]
+        public_config = {
+            key: value
+            for key, value in config.items()
+            if key != "game_class"
+        }
+        participants = [dealer]
+        for client in seated_clients:
+            if client is dealer:
+                continue
+            if len(participants) >= quota:
+                client.send(
+                    {
+                        "type": "orbital_special_full",
+                        "message": "Max players reached. You will automatically sit out.",
+                    }
+                )
+                continue
+            client.send(
+                {
+                    "type": "request_orbital_special_vote",
+                    "config": public_config,
+                    "joined": len(participants),
+                    "quota": quota,
+                }
+            )
+            response = client.recv(self.shutdown_event)
+            if (
+                response
+                and response.get("type") == "orbital_special_vote"
+                and response.get("play") is True
+            ):
+                participants.append(client)
+
+        if len(participants) < 2:
+            self._broadcast_hand_message(
+                seated_clients,
+                "Orbital special game cancelled: fewer than two players joined.",
+            )
+            return
+
+        joined_names = ", ".join(client.name for client in participants)
+        self._broadcast_hand_message(
+            seated_clients,
+            f"Orbital special game: {config['game_name']} ({joined_names}).",
+        )
+        saved = self._apply_orbital_config(config)
+        try:
+            self._broadcast_table_status()
+            self._play_hand(
+                seated_clients_override=participants,
+                dealer_name_override=dealer_name,
+                advance_dealer=False,
+            )
+        finally:
+            for field, value in saved.items():
+                setattr(self, field, value)
+            self._broadcast_table_status()
+
+    def _normalize_orbital_config(self, raw, available_players):
+        game_key = str(raw.get("game", "nlh")).lower()
+        games = {
+            "nlh": (NoLimitHoldemGame, "No-Limit Texas Hold'em", 10),
+            "plo": (PotLimitOmahaGame, "Pot-Limit Omaha", 10),
+            "aof": (AOFGame, "AOF", 7),
+            "pof": (PotOrFoldGame, "Pot or Fold", 7),
+            "pineapple": (PineappleGame, "Pineapple", 10),
+            "ultra_pineapple": (UltraPineappleGame, "Ultra Pineapple", 7),
+            "terminator": (TerminatorGame, "Terminator", 7),
+            "allocator": (AllocatorGame, "Allocator", 7),
+            "helicopter": (HelicopterGame, "Helicopter", 6),
+            "esg": (ESGGame, "ESG (Extremely Stupid Game)", 7),
+        }
+        if game_key not in games:
+            raise RuntimeError("Unknown orbital special game")
+        game_class, game_name, seat_cap = games[game_key]
+        try:
+            max_players = int(raw.get("max_players"))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("Player quota must be a whole number") from error
+        max_players = min(max_players, available_players, seat_cap)
+        if max_players < 2:
+            raise RuntimeError("Player quota must be at least two")
+        big_blind = parse_money(raw.get("big_blind", self.big_blind), "Big blind")
+        ante = parse_money(raw.get("ante", 10), "Ante")
+        try:
+            hole_cards = int(raw.get("hole_cards", 4))
+            boards = int(raw.get("boards", 1))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("Cards and boards must be whole numbers") from error
+        mode = str(raw.get("mode", "preflop")).lower()
+        try:
+            ante_bb = int(raw.get("ante_bb", 1))
+            multiplier = int(raw.get("multiplier", 10))
+        except (TypeError, ValueError) as error:
+            raise RuntimeError("Ante and multiplier must be whole numbers") from error
+        if game_key in {"plo", "pof"} and hole_cards not in {4, 5, 6}:
+            raise RuntimeError("Hole cards must be 4, 5, or 6")
+        if game_key == "plo" and boards not in {1, 2}:
+            raise RuntimeError("Boards must be 1 or 2")
+        if game_key == "plo" and mode not in {"preflop", "bomb_pot"}:
+            raise RuntimeError("PLO mode must be preflop or bomb_pot")
+        if ante_bb <= 0:
+            raise RuntimeError("Ante (in BB) must be greater than zero")
+        if multiplier not in AOFGame.ALLOWED_MULTIPLIERS:
+            raise RuntimeError("AOF multiplier must be 10, 15, 20, 25, or 30")
+        if game_key == "plo":
+            community_cards = 8 if boards == 1 else 13
+            max_players = min(max_players, (52 - community_cards) // hole_cards)
+        return {
+            "game": game_key,
+            "game_class": game_class,
+            "game_name": game_name,
+            "max_players": max_players,
+            "big_blind": big_blind,
+            "ante": ante,
+            "hole_cards": hole_cards,
+            "boards": boards,
+            "mode": mode,
+            "ante_bb": ante_bb,
+            "multiplier": multiplier,
+            "allow_run_twice": raw.get("allow_run_twice") is True,
+        }
+
+    def _apply_orbital_config(self, config):
+        fields = (
+            "game_class", "game_name", "small_blind", "big_blind",
+            "bomb_pot_ante", "aof_ante", "aof_multiplier",
+            "aof_allow_run_twice", "pof_ante", "pof_hole_cards",
+            "plo_hole_cards", "plo_boards", "plo_mode", "plo_ante_bb",
+            "pineapple_ante", "ultra_pineapple_ante", "terminator_ante",
+        )
+        saved = {field: getattr(self, field) for field in fields}
+        game = config["game"]
+        self.game_class = config["game_class"]
+        self.game_name = config["game_name"] + " — Orbital Special"
+        self.big_blind = config["big_blind"]
+        self.small_blind = self.big_blind / Decimal("2")
+        ante = config["ante"]
+        if game in {"allocator", "helicopter"}:
+            self.bomb_pot_ante = ante
+        elif game == "aof":
+            self.aof_ante = ante
+            self.aof_multiplier = config["multiplier"]
+            self.aof_allow_run_twice = config["allow_run_twice"]
+        elif game == "pof":
+            self.pof_ante = ante
+            self.pof_hole_cards = config["hole_cards"]
+        elif game == "plo":
+            self.plo_hole_cards = config["hole_cards"]
+            self.plo_boards = config["boards"]
+            self.plo_mode = config["mode"]
+            self.plo_ante_bb = config["ante_bb"]
+        elif game == "pineapple":
+            self.pineapple_ante = ante
+        elif game == "ultra_pineapple":
+            self.ultra_pineapple_ante = ante
+        elif game == "terminator":
+            self.terminator_ante = ante
+        return saved
 
     def _run_betting_round(self, seated_clients):
         acted_players = set()
@@ -2730,6 +3053,9 @@ class NetworkPokerServer:
         pineapple_ante = 0
         ultra_pineapple_ante = 0
         terminator_ante = 0
+        orbital_special = False
+        if game_class in {NoLimitHoldemGame, PotLimitOmahaGame}:
+            orbital_special = message.get("orbital_special") is True
         if game_class is PotLimitOmahaGame:
             big_blind = parse_money(message.get("big_blind"), "Big blind")
             small_blind = big_blind / Decimal("2")
@@ -2830,6 +3156,7 @@ class NetworkPokerServer:
             pineapple_ante=pineapple_ante,
             ultra_pineapple_ante=ultra_pineapple_ante,
             terminator_ante=terminator_ante,
+            orbital_special=orbital_special,
             shutdown_event=self.shutdown_event,
         )
 

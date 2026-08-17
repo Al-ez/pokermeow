@@ -161,6 +161,33 @@ def test_controller_exposes_allocator_lock_and_submits_updates():
     assert ("allocator_locked", {"type": "allocator_locked"}) in events
 
 
+def test_controller_exposes_and_submits_orbital_special_choices():
+    controller, connection = make_controller()
+    events = []
+    controller.subscribe("*", lambda event, payload: events.append((event, payload)))
+    selection = {"type": "request_orbital_special_selection", "available_players": 6}
+    vote = {
+        "type": "request_orbital_special_vote",
+        "config": {"game": "plo"},
+        "joined": 4,
+        "quota": 6,
+    }
+    connection.on_message(selection)
+    connection.on_message(vote)
+    controller.submit_orbital_selection({"game": "plo", "max_players": 6})
+    controller.submit_orbital_vote(True)
+
+    assert ("orbital_selection_required", selection) in events
+    assert ("orbital_vote_required", vote) in events
+    assert connection.sent[-2:] == [
+        {
+            "type": "orbital_special_selection",
+            "config": {"game": "plo", "max_players": 6},
+        },
+        {"type": "orbital_special_vote", "play": True},
+    ]
+
+
 def test_controller_auto_continues_for_legacy_servers():
     _, connection = make_controller()
 

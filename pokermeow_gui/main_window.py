@@ -19,6 +19,7 @@ from config import WINDOWED_SIZE
 from .controller import ClientController
 from .allocator_dialog import AllocatorDialog
 from .aof_dialog import AOFDiscardDialog
+from .orbital_dialog import OrbitalInvitationDialog, OrbitalSelectionDialog
 from .views import PokerStack
 
 
@@ -44,6 +45,7 @@ class MainWindow(QMainWindow):
         self._rebuy_dialog = None
         self._allocator_dialog = None
         self._aof_dialog = None
+        self._orbital_dialog = None
         self._showdown_seconds = 0
         self._showdown_timer = QTimer(self)
         self._showdown_timer.setInterval(1000)
@@ -228,6 +230,16 @@ class MainWindow(QMainWindow):
             self._run_it_timer.start(
                 max(0, int(payload.get("seconds", 5))) * 1000
             )
+        elif event == "orbital_selection_required":
+            self._request_orbital_selection(payload)
+        elif event == "orbital_vote_required":
+            self._request_orbital_vote(payload)
+        elif event == "orbital_full":
+            QMessageBox.information(
+                self,
+                "Special game full",
+                payload.get("message", "Max players reached. You will sit out."),
+            )
         elif event == "run_it_vote_sent":
             self._run_it_timer.stop()
             self.pages.table.hide_run_it_prompt()
@@ -351,6 +363,31 @@ class MainWindow(QMainWindow):
         )
         dialog.discarded.connect(self.controller.submit_aof_discard)
         self._aof_dialog = dialog
+        dialog.show()
+
+    def _request_orbital_selection(self, payload):
+        dialog = OrbitalSelectionDialog(
+            payload.get("available_players", 2),
+            payload.get("big_blind", 2),
+            self,
+        )
+        dialog.selected.connect(self.controller.submit_orbital_selection)
+        dialog.rejected.connect(self.controller.cancel_orbital_selection)
+        self._orbital_dialog = dialog
+        dialog.finished.connect(lambda _result: setattr(self, "_orbital_dialog", None))
+        dialog.show()
+
+    def _request_orbital_vote(self, payload):
+        dialog = OrbitalInvitationDialog(
+            payload.get("config", {}),
+            payload.get("joined", 1),
+            payload.get("quota", 2),
+            self,
+        )
+        dialog.decided.connect(self.controller.submit_orbital_vote)
+        dialog.rejected.connect(lambda: self.controller.submit_orbital_vote(False))
+        self._orbital_dialog = dialog
+        dialog.finished.connect(lambda _result: setattr(self, "_orbital_dialog", None))
         dialog.show()
 
     def _request_terminator_board(self, payload):
