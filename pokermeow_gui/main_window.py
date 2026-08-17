@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from config import WINDOWED_SIZE
 from .controller import ClientController
 from .allocator_dialog import AllocatorDialog
 from .aof_dialog import AOFDiscardDialog
@@ -26,10 +27,14 @@ class ControllerBridge(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, controller=None):
+    def __init__(self, controller=None, fullscreen=False):
         super().__init__()
         self.setWindowTitle("PokerMeow")
-        self.setFixedSize(1180, 720)
+        self.fullscreen = bool(fullscreen)
+        if self.fullscreen:
+            self.setMinimumSize(900, 600)
+        else:
+            self.setFixedSize(*WINDOWED_SIZE)
         self.controller = controller or ClientController()
         self.pages = PokerStack()
         self.setCentralWidget(self.pages)

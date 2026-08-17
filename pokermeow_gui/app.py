@@ -2,6 +2,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from config import FULLSCREEN
 from .main_window import MainWindow
 
 
@@ -136,6 +137,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("PokerMeow")
     app.setStyleSheet(STYLE)
-    window = MainWindow()
-    window.show()
+    window = MainWindow(fullscreen=FULLSCREEN)
+    if FULLSCREEN:
+        window.showFullScreen()
+    else:
+        window.show()
     return app.exec()
