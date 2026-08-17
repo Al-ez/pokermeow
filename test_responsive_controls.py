@@ -121,3 +121,19 @@ def test_terminator_creation_exposes_its_bomb_pot_ante():
     assert menu.terminator_ante.isVisibleTo(menu.host_box)
     assert not menu.big_blind.isVisibleTo(menu.host_box)
     assert menu.seats.maximum() == 7
+
+
+def test_home_screen_has_top_right_settings_gear():
+    app = QApplication.instance() or QApplication([])
+    menu = MainMenuView()
+    requested = []
+    menu.settings_requested.connect(lambda: requested.append(True))
+    menu.resize(1180, 720)
+    menu.show()
+    app.processEvents()
+
+    assert menu.settings_button.text() == "⚙"
+    assert menu.settings_button.toolTip() == "Settings"
+    assert menu.settings_button.x() > menu.width() / 2
+    menu.settings_button.click()
+    assert requested == [True]

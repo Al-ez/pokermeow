@@ -5,7 +5,7 @@ MAX_CONNECTIONS = 50
 # Display mode switch for the GUI:
 # False = fixed 1180x720 window for development/testing.
 # True = borderless fullscreen layout for playing.
-FULLSCREEN = True
+FULLSCREEN = False
 WINDOWED_SIZE = (1180, 720)
 
 TIMEOUTS = {

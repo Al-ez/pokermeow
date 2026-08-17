@@ -1277,11 +1277,25 @@ class PokerTableDisplay(QWidget):
 
 class MainMenuView(QWidget):
     connect_requested = Signal(dict)
+    settings_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(80, 45, 80, 45)
+        settings_row = QHBoxLayout()
+        settings_row.addStretch()
+        self.settings_button = QPushButton("⚙")
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.setAccessibleName("Settings")
+        self.settings_button.setFixedSize(42, 42)
+        self.settings_button.setStyleSheet(
+            "QPushButton { font-size: 24px; padding: 0; border-radius: 20px; }"
+        )
+        self.settings_button.clicked.connect(self.settings_requested.emit)
+        settings_row.addWidget(self.settings_button)
+        root.addLayout(settings_row)
         root.addStretch()
 
         title = QLabel("PokerMeow")

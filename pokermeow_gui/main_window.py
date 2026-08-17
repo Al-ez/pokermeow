@@ -1,4 +1,4 @@
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QDialog,
@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         self.controller.subscribe("*", self.bridge.event_received.emit)
 
         self.pages.menu.connect_requested.connect(self._connect)
+        self.pages.menu.settings_requested.connect(self._open_settings)
         self.pages.lobby.leave_requested.connect(self._request_leave)
         self.pages.lobby.seat_selected.connect(self._select_seat)
         self.pages.table.leave_requested.connect(self._request_leave)
@@ -62,6 +63,85 @@ class MainWindow(QMainWindow):
         self.pages.table.run_it_requested.connect(self._submit_run_it_vote)
         self.pages.table.chat_requested.connect(self._submit_chat)
         self.statusBar().showMessage("Ready")
+
+    def _open_settings(self):
+        self._create_settings_dialog().exec()
+
+    def _create_settings_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        layout = QVBoxLayout(dialog)
+        title_row = QHBoxLayout()
+        title = QLabel("Settings")
+        title.setObjectName("sectionTitle")
+        close_button = QPushButton("X")
+        close_button.setObjectName("settingsCloseButton")
+        close_button.setToolTip("Close settings")
+        close_button.setFixedSize(34, 34)
+        close_button.clicked.connect(dialog.reject)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        title_row.addWidget(close_button)
+        layout.addLayout(title_row)
+
+        fullscreen_row = QHBoxLayout()
+        fullscreen_row.addWidget(QLabel("Fullscreen"))
+        fullscreen_row.addStretch()
+        fullscreen_toggle = QPushButton()
+        fullscreen_toggle.setObjectName("fullscreenToggle")
+        fullscreen_toggle.setCheckable(True)
+        fullscreen_toggle.setChecked(self.isFullScreen() or self.fullscreen)
+        self._update_fullscreen_toggle_text(fullscreen_toggle)
+        fullscreen_toggle.clicked.connect(
+            lambda checked: self._toggle_fullscreen_setting(
+                fullscreen_toggle,
+                checked,
+            )
+        )
+        fullscreen_row.addWidget(fullscreen_toggle)
+        layout.addLayout(fullscreen_row)
+
+        quit_button = QPushButton("Quit Game")
+        quit_button.setObjectName("quitGameButton")
+        quit_button.setStyleSheet(
+            "QPushButton { background: #991b1b; color: white; font-weight: 800; }"
+        )
+        quit_button.clicked.connect(lambda: self._confirm_quit(dialog))
+        layout.addWidget(quit_button)
+        dialog.setMinimumWidth(330)
+        return dialog
+
+    def _toggle_fullscreen_setting(self, button, fullscreen):
+        self.set_fullscreen(fullscreen)
+        QSettings("PokerMeow", "PokerMeow").setValue("fullscreen", fullscreen)
+        self._update_fullscreen_toggle_text(button)
+
+    @staticmethod
+    def _update_fullscreen_toggle_text(button):
+        button.setText("On" if button.isChecked() else "Off")
+
+    def _confirm_quit(self, dialog):
+        answer = QMessageBox.question(
+            dialog,
+            "Quit Game",
+            "Are you sure you want to quit the game?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            dialog.accept()
+            self.close()
+
+    def set_fullscreen(self, fullscreen):
+        self.fullscreen = bool(fullscreen)
+        if self.fullscreen:
+            self.setMinimumSize(900, 600)
+            self.setMaximumSize(16777215, 16777215)
+            self.showFullScreen()
+        else:
+            self.showNormal()
+            self.setFixedSize(*WINDOWED_SIZE)
 
     def closeEvent(self, event):
         self.controller.disconnect()
