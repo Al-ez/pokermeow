@@ -1283,6 +1283,7 @@ class MainMenuView(QWidget):
         self.game.addItem("Terminator", "terminator")
         self.game.addItem("Allocator", "allocator")
         self.game.addItem("Helicopter", "helicopter")
+        self.game.addItem("ESG (Extremely Stupid Game)", "esg")
         self.seats = ResponsiveSpinBox()
         self.seats.setRange(2, 10)
         self.seats.setValue(6)
@@ -1290,7 +1291,7 @@ class MainMenuView(QWidget):
             QAbstractSpinBox.ButtonSymbols.NoButtons
         )
         self.big_blind = ResponsiveDoubleSpinBox()
-        self.big_blind.setRange(0.01, 1_000_000)
+        self.big_blind.setRange(0.01, 1_000_000_000)
         self.big_blind.setValue(2)
         self.big_blind.setButtonSymbols(
             QAbstractSpinBox.ButtonSymbols.NoButtons

@@ -158,6 +158,17 @@ class PotLimitOmahaGame(PotLimitBettingMixin, NoLimitHoldemGame):
                 f"PLO players must have exactly {self.hole_card_count} hole cards"
             )
 
+        return self._best_plo_hand_from_available(hole_cards, board)
+
+    @staticmethod
+    def _best_plo_hand_from_available(
+        hole_cards: List[Card],
+        board: List[Card],
+    ) -> Tuple[int, List[int], List[Card], str]:
+        """Evaluate PLO using exactly two of any available private cards."""
+        if len(hole_cards) < 2:
+            raise ValueError("PLO requires at least two private cards")
+
         if len(board) != 5:
             raise ValueError("PLO showdown requires exactly five board cards")
 

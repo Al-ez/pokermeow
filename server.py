@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from allocator import AllocatorGame
 from aof import AOFGame
 from helicopter import HelicopterGame
+from esg import ESGGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from game_categories import BoardCategory
 from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
@@ -467,7 +468,9 @@ class PokerTableSession:
     def run(self):
         print(f"Table {self.table_id} started.")
         print(f"Game: {self.game_name}")
-        if issubclass(self.game_class, AllocatorGame):
+        if self.game_class is ESGGame:
+            print(f"Blinds: {self.small_blind}/{self.big_blind}")
+        elif issubclass(self.game_class, AllocatorGame):
             print(f"Bomb pot ante: {self.bomb_pot_ante}")
         elif self.game_class is PotOrFoldGame:
             print(
@@ -647,6 +650,8 @@ class PokerTableSession:
             unit = self.terminator_ante
         elif self.game_class is AOFGame:
             unit = self.aof_ante
+        elif self.game_class is ESGGame:
+            unit = self.big_blind
         elif issubclass(self.game_class, AllocatorGame):
             unit = self.bomb_pot_ante
         else:
@@ -862,6 +867,13 @@ class PokerTableSession:
                 hole_cards=self.pof_hole_cards,
                 shuffle=True,
             )
+        elif self.game_class is ESGGame:
+            self.game = self.game_class(
+                player_stacks,
+                small_blind=self.small_blind,
+                big_blind=self.big_blind,
+                shuffle=True,
+            )
         elif issubclass(self.game_class, AllocatorGame):
             self.game = self.game_class(
                 player_stacks,
@@ -959,7 +971,7 @@ class PokerTableSession:
                 if len(self.game.active_players()) > 1:
                     runout_boards = self._deal_all_in_runout(seated_clients)
             elif (
-                not issubclass(self.game_class, AllocatorGame)
+                getattr(self.game, "has_preflop_action", True)
                 and not (
                     self.game_class is PotLimitOmahaGame
                     and self.game.mode == "bomb_pot"
@@ -1042,7 +1054,10 @@ class PokerTableSession:
             ):
                 self._deal_remaining_board(seated_clients)
 
-            if issubclass(self.game_class, AllocatorGame) and len(self.game.active_players()) > 1:
+            if (
+                getattr(self.game, "requires_allocator_allocation", False)
+                and len(self.game.active_players()) > 1
+            ):
                 self._request_allocator_allocations(seated_clients)
 
             if runout_boards and len(runout_boards) == 2:
@@ -2686,6 +2701,9 @@ class NetworkPokerServer:
         elif game_choice == "helicopter":
             game_class = HelicopterGame
             game_name = "Helicopter"
+        elif game_choice == "esg":
+            game_class = ESGGame
+            game_name = "ESG (Extremely Stupid Game)"
         else:
             game_class = NoLimitHoldemGame
             game_name = "No-Limit Texas Hold'em"
@@ -2776,7 +2794,7 @@ class NetworkPokerServer:
             aof_allow_run_twice = message.get("allow_run_twice") is True
             small_blind = Decimal("1")
             big_blind = Decimal("2")
-        elif issubclass(game_class, AllocatorGame):
+        elif issubclass(game_class, AllocatorGame) and game_class is not ESGGame:
             small_blind = Decimal("1")
             big_blind = Decimal("2")
             bomb_pot_ante = self._parse_int(

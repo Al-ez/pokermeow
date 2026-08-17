@@ -305,7 +305,7 @@ def ask_table_config():
         game_choice = prompt_input(
             "Choose game: [1] NLH  [2] PLO  [3] Allocator "
             "[4] Helicopter  [5] AOF  [6] POF  [7] Pineapple "
-            "[8] Ultra Pineapple  [9] Terminator: "
+            "[8] Ultra Pineapple  [9] Terminator  [10] ESG: "
         ).strip()
         if game_choice == "1":
             game = "nlh"
@@ -334,7 +334,10 @@ def ask_table_config():
         if game_choice == "9":
             game = "terminator"
             break
-        print("Please choose a number from 1 to 9.")
+        if game_choice == "10":
+            game = "esg"
+            break
+        print("Please choose a number from 1 to 10.")
 
     seat_cap = (
         10

@@ -33,6 +33,8 @@ class Allocation:
 
 class AllocatorGame(PotLimitBettingMixin, NoLimitHoldemGame):
     board_category = BoardCategory.DOUBLE_BOARD
+    requires_allocator_allocation = True
+    has_preflop_action = False
 
     def __init__(
         self,
