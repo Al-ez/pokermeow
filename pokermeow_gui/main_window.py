@@ -522,6 +522,18 @@ class MainWindow(QMainWindow):
                         lambda cards=list(spotlight_cards), name=hand_name:
                             self.pages.table.spotlight_showdown(cards, name),
                     )
+        if result.get("orbital_special_hand"):
+            if allocator_details:
+                announcement_delay = 10750
+            elif result.get("double_board_results"):
+                announcement_delay = 5750
+            else:
+                announcement_delay = 750
+            QTimer.singleShot(
+                announcement_delay,
+                lambda data=dict(result):
+                    self.pages.table.show_winner_announcement(data),
+            )
         self._showdown_seconds = max(0, int(result.get("display_seconds", 3)))
         self._show_showdown_timer()
         self._showdown_timer.start()

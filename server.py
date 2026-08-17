@@ -481,6 +481,7 @@ class PokerTableSession:
         self.dealer_index = 0
         self.special_button_seat = None
         self._special_orbit_armed = self.orbital_special
+        self._orbital_hand_active = False
         self.shutdown_event = shutdown_event or threading.Event()
 
     def run(self):
@@ -1441,6 +1442,7 @@ class PokerTableSession:
                     "hands": revealed_hands,
                     "display_seconds": showdown_delay,
                     "spotlight_cards": spotlight_cards,
+                    "orbital_special_hand": self._orbital_hand_active,
                 },
             )
 
@@ -1567,6 +1569,7 @@ class PokerTableSession:
         )
         saved = self._apply_orbital_config(config)
         try:
+            self._orbital_hand_active = True
             self._broadcast_table_status()
             self._play_hand(
                 seated_clients_override=participants,
@@ -1574,6 +1577,7 @@ class PokerTableSession:
                 advance_dealer=False,
             )
         finally:
+            self._orbital_hand_active = False
             for field, value in saved.items():
                 setattr(self, field, value)
             self._broadcast_table_status()

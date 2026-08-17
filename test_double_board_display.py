@@ -72,3 +72,32 @@ def test_esg_deck_size_is_shown_and_hidden_for_other_games():
 
     display.update_game({"pot": 3, "players": {}}, table, "Alice")
     assert display.deck_size_label.isHidden()
+
+
+def test_special_showdown_announcement_names_the_winner_and_hand():
+    app = QApplication.instance() or QApplication([])
+    display = PokerTableDisplay(show_game_details=True)
+    display.show_winner_announcement(
+        {
+            "winners": ["Alice"],
+            "winner_hand_names": {"Alice": "full house"},
+            "hands": [],
+        }
+    )
+    app.processEvents()
+    assert display.winning_hand_label.text() == "Alice wins with Full House"
+
+
+def test_esg_stage_announcement_names_each_category_winner():
+    app = QApplication.instance() or QApplication([])
+    display = PokerTableDisplay(show_game_details=True)
+    display.spotlight_allocator_stage(
+        {
+            "players": {"Alice": {"label": "full house", "cards": []}},
+            "winners": [{"player": "Alice"}],
+        },
+        "Hand Strength",
+        True,
+    )
+    app.processEvents()
+    assert "Alice wins with Full House" in display.winning_hand_label.text()

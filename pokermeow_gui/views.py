@@ -1092,13 +1092,43 @@ class PokerTableDisplay(QWidget):
             self.board_label.setText(
                 cards_html(self.community_cards, spotlight_cards)
             )
-        first_winner = players.get(winner_names[0], {}) if winner_names else {}
-        hand_label = first_winner.get("label" if is_strength else "hand_name", "")
         banner = title
-        if hand_label:
-            banner += " · " + str(hand_label).replace("_", " ").title()
+        winner_text = []
+        for winner_name in winner_names:
+            winner = players.get(winner_name, {})
+            hand_label = winner.get(
+                "label" if is_strength else "hand_name",
+                "winning hand",
+            )
+            winner_text.append(
+                f"{winner_name} wins with "
+                f"{str(hand_label).replace('_', ' ').title()}"
+            )
+        if winner_text:
+            banner += " · " + "; ".join(winner_text)
         self.winning_hand_label.setText(banner)
         self.winning_hand_label.setVisible(True)
+
+    def show_winner_announcement(self, result):
+        hand_details = {
+            hand.get("player"): hand
+            for hand in result.get("hands", [])
+        }
+        winner_hand_names = result.get("winner_hand_names", {})
+        announcements = []
+        for winner in result.get("winners", []):
+            label = winner_hand_names.get(
+                winner,
+                result.get("hand_name", "winning hand"),
+            )
+            rankings = hand_details.get(winner, {}).get("rankings", {})
+            if rankings.get("hand_strength"):
+                label = rankings["hand_strength"]
+            label = str(label).replace("_", " ").title()
+            announcements.append(f"{winner} wins with {label}")
+        if announcements:
+            self.winning_hand_label.setText("; ".join(announcements))
+            self.winning_hand_label.setVisible(True)
 
     def show_runout_boards(self, boards):
         if len(boards) != 2:
@@ -2029,6 +2059,9 @@ class TableView(QWidget):
 
     def show_payouts(self, payouts):
         self.table_display.show_payouts(payouts)
+
+    def show_winner_announcement(self, result):
+        self.table_display.show_winner_announcement(result)
 
     def show_run_it_prompt(self):
         self.table_display.show_run_it_prompt()
