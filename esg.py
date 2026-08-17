@@ -13,6 +13,7 @@ class ESGGame(AllocatorGame):
     MAX_STREET_DRAW = 3
     requires_allocator_allocation = False
     has_preflop_action = True
+    shows_deck_size = True
 
     def __init__(
         self,

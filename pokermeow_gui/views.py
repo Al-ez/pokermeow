@@ -725,6 +725,14 @@ class PokerTableDisplay(QWidget):
         self.pot_label = QLabel("Pot: 0")
         self.pot_label.setObjectName("feltPot")
         self.pot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.deck_size_label = QLabel("")
+        self.deck_size_label.setObjectName("feltDeckSize")
+        self.deck_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.deck_size_label.setStyleSheet(
+            "color: #dbeafe; background: transparent; border: none; "
+            "font-weight: 800;"
+        )
+        self.deck_size_label.hide()
         self.board_label = QLabel(cards_html([]))
         self.board_label.setTextFormat(Qt.TextFormat.RichText)
         self.board_label.setObjectName("feltBoard")
@@ -739,6 +747,7 @@ class PokerTableDisplay(QWidget):
         )
         felt_layout.addStretch()
         felt_layout.addWidget(self.pot_label)
+        felt_layout.addWidget(self.deck_size_label)
         felt_layout.addWidget(
             self.winning_hand_label,
             alignment=Qt.AlignmentFlag.AlignCenter,
@@ -882,6 +891,7 @@ class PokerTableDisplay(QWidget):
         seats = self._visible_seats(table)
         self.player_seats = {}
         self.pot_label.setText("Waiting for players")
+        self.deck_size_label.hide()
         self.board_label.setText("")
         self.winning_hand_label.setVisible(False)
         self.termination_count_label.hide()
@@ -917,6 +927,11 @@ class PokerTableDisplay(QWidget):
         dealer = state.get("dealer")
         self.player_seats = {}
         self.pot_label.setText(f"Pot: {state.get('pot', 0)}")
+        deck_size = state.get("deck_size")
+        self.deck_size_label.setText(
+            f"Deck: {int(deck_size)} cards" if deck_size is not None else ""
+        )
+        self.deck_size_label.setVisible(deck_size is not None)
         self.community_cards = list(state.get("board", []))
         self.board_label.setText(self._community_cards_html(state))
         self.board_label.setToolTip(self._community_cards_text(state))

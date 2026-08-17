@@ -3,6 +3,7 @@ from decimal import Decimal
 from card import Card
 from esg import ESGGame
 from game_categories import BoardCategory
+from network_protocol import visible_state_for
 
 
 def c(rank, suit):
@@ -45,6 +46,15 @@ def test_esg_deals_zero_when_no_equal_draw_is_available():
     game.start_hand()
     game.deal_flop()
     assert [len(player.hand) for player in game.players] == [6] * 7
+
+
+def test_esg_deck_size_is_public_and_folded_cards_return_to_it():
+    game = ESGGame({"Alice": 100, "Bob": 100, "Cara": 100}, shuffle=False)
+    game.start_hand()
+    assert visible_state_for(game, "Bob")["deck_size"] == 34
+
+    game.act("Alice", "fold")
+    assert visible_state_for(game, "Bob")["deck_size"] == 40
 
 
 def test_esg_scores_plo_boards_and_best_private_five_without_allocation():

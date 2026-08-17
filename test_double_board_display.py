@@ -58,3 +58,17 @@ def test_terminator_count_panel_lists_rank_totals():
     assert "A</b> x3" in display.termination_count_label.text()
     assert "J</b> x4" in display.termination_count_label.text()
     assert "8</b> x2" in display.termination_count_label.text()
+
+
+def test_esg_deck_size_is_shown_and_hidden_for_other_games():
+    app = QApplication.instance() or QApplication([])
+    display = PokerTableDisplay(show_game_details=True)
+    table = {"seats": []}
+
+    display.update_game({"pot": 3, "deck_size": 34, "players": {}}, table, "Alice")
+    app.processEvents()
+    assert display.deck_size_label.text() == "Deck: 34 cards"
+    assert not display.deck_size_label.isHidden()
+
+    display.update_game({"pot": 3, "players": {}}, table, "Alice")
+    assert display.deck_size_label.isHidden()

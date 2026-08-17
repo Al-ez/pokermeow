@@ -85,6 +85,9 @@ def visible_state_for(game, player_name):
         state["top_board"] = cards_text(game.top_board)
         state["bottom_board"] = cards_text(game.bottom_board)
 
+    if getattr(game, "shows_deck_size", False):
+        state["deck_size"] = game.deck.remaining()
+
     if hasattr(game, "terminated_ranks"):
         state["terminated_board"] = game.terminated_board
         state["terminated_ranks"] = sorted(game.terminated_ranks)
