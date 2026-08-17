@@ -361,11 +361,22 @@ class CardFanWidget(QWidget):
         self.card_labels = []
         self._animations = []
         self._cards_key = None
+        self._back_count = 0
+        self.count_label = QLabel(self)
+        self.count_label.setObjectName("cardBackCount")
+        self.count_label.setStyleSheet(
+            "QLabel { color: #f8fafc; background: #334155; border: none; "
+            "border-radius: 8px; padding: 2px 5px; font-weight: 800; }"
+        )
+        self.count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.count_label.hide()
         self.setMinimumSize(118, self.CARD_H + 2)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("background: transparent; border: none;")
 
     def set_cards(self, cards):
+        self._back_count = 0
+        self.count_label.hide()
         self._set_card_texts(
             [
                 (
@@ -413,9 +424,18 @@ class CardFanWidget(QWidget):
             total = max(0, int(count))
         except (TypeError, ValueError):
             total = 0
-        self._set_card_texts([("\U0001F0A0", "#bfdbfe", "") for _ in range(total)])
+        collapsed = total > self.MAX_CARDS_PER_ROW
+        self._back_count = total if collapsed else 0
+        self._set_card_texts(
+            [("\U0001F0A0", "#bfdbfe", "") for _ in range(1 if collapsed else total)]
+        )
+        self.count_label.setText(f"×{total}" if collapsed else "")
+        self.count_label.setVisible(collapsed)
+        self._layout_cards()
 
     def clear(self):
+        self._back_count = 0
+        self.count_label.hide()
         self._set_card_texts([])
 
     def _set_card_texts(self, cards):
@@ -484,6 +504,16 @@ class CardFanWidget(QWidget):
                 self.CARD_H,
             )
             label.raise_()
+        if self._back_count:
+            first = self.card_labels[0]
+            badge_width = max(34, self.count_label.sizeHint().width())
+            self.count_label.setGeometry(
+                first.x() + self.CARD_W + 6,
+                first.y() + int((self.CARD_H - 24) / 2),
+                badge_width,
+                24,
+            )
+            self.count_label.raise_()
 
 
 class PokerActionSpot(QWidget):
@@ -1129,7 +1159,20 @@ class PokerTableDisplay(QWidget):
             card_count = len(
                 self.action_widgets[seat_number].cards_label.card_labels
             )
-            local_action_h = max(action_h, 94) if card_count > 6 else action_h
+            card_rows = max(
+                1,
+                (
+                    card_count
+                    + CardFanWidget.MAX_CARDS_PER_ROW
+                    - 1
+                ) // CardFanWidget.MAX_CARDS_PER_ROW,
+            )
+            cards_height = (
+                card_rows * CardFanWidget.CARD_H
+                + (card_rows - 1) * CardFanWidget.ROW_GAP
+                + 8
+            )
+            local_action_h = max(action_h, cards_height)
             card_y = seat_geometry.y() - local_action_h / 2 - 2
             self._place_widget(
                 self.action_widgets[seat_number],
