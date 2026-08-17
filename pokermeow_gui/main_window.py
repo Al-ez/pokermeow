@@ -235,6 +235,10 @@ class MainWindow(QMainWindow):
         elif event == "orbital_vote_required":
             self._request_orbital_vote(payload)
         elif event == "orbital_full":
+            if self._orbital_dialog is not None:
+                self._orbital_dialog.blockSignals(True)
+                self._orbital_dialog.reject()
+                self._orbital_dialog = None
             QMessageBox.information(
                 self,
                 "Special game full",

@@ -1,4 +1,5 @@
 import os
+import time
 from decimal import Decimal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -23,7 +24,15 @@ class FakeClient:
         self.messages.append(message)
 
     def recv(self, stop_event=None):
-        return self.responses.pop(0) if self.responses else None
+        if self.responses:
+            response = self.responses.pop(0)
+            if isinstance(response, tuple):
+                delay, response = response
+                time.sleep(delay)
+            return response
+        if stop_event is not None:
+            stop_event.wait(timeout=2)
+        return None
 
 
 def make_session():
@@ -67,6 +76,84 @@ def test_orbital_configuration_enforces_game_and_deck_seat_caps():
     )
 
     assert config["max_players"] == 6
+
+
+def test_orbital_hole_cards_are_derived_from_the_selected_variant():
+    session, _clients = make_session()
+    expected = {
+        "nlh": 2,
+        "aof": 3,
+        "pineapple": 3,
+        "ultra_pineapple": 5,
+        "terminator": 6,
+        "allocator": 6,
+        "helicopter": 6,
+        "esg": 6,
+    }
+    for game, hole_cards in expected.items():
+        config = session._normalize_orbital_config(
+            {
+                "game": game,
+                "max_players": 4,
+                "big_blind": 2,
+                "ante": 10,
+                # Deliberately wrong: fixed variants must ignore this value.
+                "hole_cards": 4,
+                "boards": 1,
+                "mode": "preflop",
+            },
+            4,
+        )
+        assert config["hole_cards"] == hole_cards
+
+
+def test_invitation_config_only_contains_fields_relevant_to_esg():
+    session, _clients = make_session()
+    config = session._normalize_orbital_config(
+        {
+            "game": "esg",
+            "max_players": 4,
+            "big_blind": 2,
+            "ante": 10,
+            "hole_cards": 4,
+            "boards": 1,
+            "mode": "preflop",
+            "multiplier": 10,
+        },
+        4,
+    )
+
+    assert session._orbital_public_config(config) == {
+        "game": "ESG (Extremely Stupid Game)",
+        "max_players": 4,
+        "big_blind": Decimal("2"),
+        "hole_cards": 6,
+    }
+
+
+def test_invitation_config_uses_variant_specific_fields():
+    session, _clients = make_session()
+    aof = session._normalize_orbital_config(
+        {
+            "game": "aof",
+            "max_players": 4,
+            "big_blind": 2,
+            "ante": 3,
+            "hole_cards": 6,
+            "boards": 2,
+            "mode": "preflop",
+            "multiplier": 20,
+            "allow_run_twice": True,
+        },
+        4,
+    )
+    public = session._orbital_public_config(aof)
+    assert set(public) == {
+        "game", "max_players", "hole_cards", "ante",
+        "multiplier", "allow_run_twice",
+    }
+    assert "big_blind" not in public
+    assert "boards" not in public
 
 
 def test_creation_field_only_appears_for_nlh_and_plo():
@@ -131,3 +218,40 @@ def test_special_roster_honors_quota_and_auto_sits_out_remaining_players():
     assert any(message["type"] == "orbital_special_full" for message in clients[2].messages)
     assert any(message["type"] == "orbital_special_full" for message in clients[3].messages)
     assert session.game_class is NoLimitHoldemGame
+
+
+def test_concurrent_votes_admit_the_fastest_players_not_seat_order():
+    session, clients = make_session()
+    clients[0].responses.append(
+        {
+            "type": "orbital_special_selection",
+            "config": {
+                "game": "nlh",
+                "max_players": 2,
+                "big_blind": 2,
+                "ante": 10,
+                "hole_cards": 4,
+                "boards": 1,
+                "mode": "preflop",
+            },
+        }
+    )
+    clients[1].responses.append(
+        (0.08, {"type": "orbital_special_vote", "play": True})
+    )
+    clients[2].responses.append(
+        (0.01, {"type": "orbital_special_vote", "play": True})
+    )
+    played = []
+    session._play_hand = lambda **kwargs: played.append(kwargs)
+
+    session._run_orbital_special("A")
+
+    assert [client.name for client in played[0]["seated_clients_override"]] == ["A", "C"]
+    for client in clients[1:]:
+        assert any(
+            message["type"] == "request_orbital_special_vote"
+            for message in client.messages
+        )
+    assert any(message["type"] == "orbital_special_full" for message in clients[1].messages)
+    assert any(message["type"] == "orbital_special_full" for message in clients[3].messages)

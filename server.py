@@ -3,6 +3,7 @@ from collections import deque
 import select
 import socket
 import random
+import queue
 import string
 import threading
 import time
@@ -1494,23 +1495,10 @@ class PokerTableSession:
             return
 
         quota = config["max_players"]
-        public_config = {
-            key: value
-            for key, value in config.items()
-            if key != "game_class"
-        }
+        public_config = self._orbital_public_config(config)
         participants = [dealer]
-        for client in seated_clients:
-            if client is dealer:
-                continue
-            if len(participants) >= quota:
-                client.send(
-                    {
-                        "type": "orbital_special_full",
-                        "message": "Max players reached. You will automatically sit out.",
-                    }
-                )
-                continue
+        invited = [client for client in seated_clients if client is not dealer]
+        for client in invited:
             client.send(
                 {
                     "type": "request_orbital_special_vote",
@@ -1519,13 +1507,51 @@ class PokerTableSession:
                     "quota": quota,
                 }
             )
-            response = client.recv(self.shutdown_event)
+
+        responses = queue.PriorityQueue()
+        voting_closed = threading.Event()
+        pending = set(invited)
+
+        def collect_vote(client):
+            response = client.recv(voting_closed)
+            responses.put((time.monotonic_ns(), client.name, client, response))
+
+        for client in invited:
+            threading.Thread(
+                target=collect_vote,
+                args=(client,),
+                daemon=True,
+            ).start()
+
+        while pending and len(participants) < quota:
+            try:
+                _received_at, _name, client, response = responses.get(timeout=0.25)
+            except queue.Empty:
+                if self.shutdown_event.is_set():
+                    voting_closed.set()
+                    return
+                continue
+            if client not in pending:
+                continue
+            pending.remove(client)
             if (
                 response
                 and response.get("type") == "orbital_special_vote"
                 and response.get("play") is True
             ):
                 participants.append(client)
+
+        if len(participants) >= quota:
+            voting_closed.set()
+            for client in list(pending):
+                client.send(
+                    {
+                        "type": "orbital_special_full",
+                        "message": "Max players reached. You will automatically sit out.",
+                    }
+                )
+        else:
+            voting_closed.set()
 
         if len(participants) < 2:
             self._broadcast_hand_message(
@@ -1555,20 +1581,22 @@ class PokerTableSession:
     def _normalize_orbital_config(self, raw, available_players):
         game_key = str(raw.get("game", "nlh")).lower()
         games = {
-            "nlh": (NoLimitHoldemGame, "No-Limit Texas Hold'em", 10),
-            "plo": (PotLimitOmahaGame, "Pot-Limit Omaha", 10),
-            "aof": (AOFGame, "AOF", 7),
-            "pof": (PotOrFoldGame, "Pot or Fold", 7),
-            "pineapple": (PineappleGame, "Pineapple", 10),
-            "ultra_pineapple": (UltraPineappleGame, "Ultra Pineapple", 7),
-            "terminator": (TerminatorGame, "Terminator", 7),
-            "allocator": (AllocatorGame, "Allocator", 7),
-            "helicopter": (HelicopterGame, "Helicopter", 6),
-            "esg": (ESGGame, "ESG (Extremely Stupid Game)", 7),
+            # fixed_hole_cards is None only for variants where the dealer
+            # genuinely chooses the count.
+            "nlh": (NoLimitHoldemGame, "No-Limit Texas Hold'em", 10, 2),
+            "plo": (PotLimitOmahaGame, "Pot-Limit Omaha", 10, None),
+            "aof": (AOFGame, "AOF", 7, 3),
+            "pof": (PotOrFoldGame, "Pot or Fold", 7, None),
+            "pineapple": (PineappleGame, "Pineapple", 10, 3),
+            "ultra_pineapple": (UltraPineappleGame, "Ultra Pineapple", 7, 5),
+            "terminator": (TerminatorGame, "Terminator", 7, 6),
+            "allocator": (AllocatorGame, "Allocator", 7, 6),
+            "helicopter": (HelicopterGame, "Helicopter", 6, 6),
+            "esg": (ESGGame, "ESG (Extremely Stupid Game)", 7, 6),
         }
         if game_key not in games:
             raise RuntimeError("Unknown orbital special game")
-        game_class, game_name, seat_cap = games[game_key]
+        game_class, game_name, seat_cap, fixed_hole_cards = games[game_key]
         try:
             max_players = int(raw.get("max_players"))
         except (TypeError, ValueError) as error:
@@ -1579,10 +1607,15 @@ class PokerTableSession:
         big_blind = parse_money(raw.get("big_blind", self.big_blind), "Big blind")
         ante = parse_money(raw.get("ante", 10), "Ante")
         try:
-            hole_cards = int(raw.get("hole_cards", 4))
+            selected_hole_cards = int(raw.get("hole_cards", 4))
             boards = int(raw.get("boards", 1))
         except (TypeError, ValueError) as error:
             raise RuntimeError("Cards and boards must be whole numbers") from error
+        hole_cards = (
+            fixed_hole_cards
+            if fixed_hole_cards is not None
+            else selected_hole_cards
+        )
         mode = str(raw.get("mode", "preflop")).lower()
         try:
             ante_bb = int(raw.get("ante_bb", 1))
@@ -1616,6 +1649,32 @@ class PokerTableSession:
             "multiplier": multiplier,
             "allow_run_twice": raw.get("allow_run_twice") is True,
         }
+
+    @staticmethod
+    def _orbital_public_config(config):
+        game = config["game"]
+        public = {
+            "game": config["game_name"],
+            "max_players": config["max_players"],
+        }
+        if game in {"nlh", "plo", "esg"}:
+            public["big_blind"] = config["big_blind"]
+
+        # Starting-card count is useful to every invitee, even when fixed by
+        # the variant rather than chosen by the dealer.
+        public["hole_cards"] = config["hole_cards"]
+
+        if game not in {"nlh", "plo", "esg"}:
+            public["ante"] = config["ante"]
+        if game == "plo":
+            public["boards"] = config["boards"]
+            public["mode"] = config["mode"]
+            if config["mode"] == "bomb_pot":
+                public["ante_bb"] = config["ante_bb"]
+        elif game == "aof":
+            public["multiplier"] = config["multiplier"]
+            public["allow_run_twice"] = config["allow_run_twice"]
+        return public
 
     def _apply_orbital_config(self, config):
         fields = (
