@@ -4,7 +4,7 @@ except ImportError as error:
     if error.name == "PySide6":
         raise SystemExit(
             "PySide6 is required for the GUI. Install it with: "
-            "py -m pip install -r requirements-gui.txt"
+            "python -m pip install -r requirements.txt"
         ) from error
     raise
 

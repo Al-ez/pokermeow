@@ -3,7 +3,19 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from nlh import NoLimitHoldemGame
 from server import PokerTableSession, Seat, Table
+
+
+def make_holdem_session():
+    return PokerTableSession(
+        table_id="ABCD",
+        game_class=NoLimitHoldemGame,
+        game_name="No-Limit Texas Hold'em",
+        small_blind=Decimal("5"),
+        big_blind=Decimal("10"),
+        max_seats=2,
+    )
 
 
 def action_result(action, amount, current_bet):
@@ -101,7 +113,7 @@ def test_valid_rebuy_restores_the_stack_and_keeps_the_seat():
     )
     restored = {}
     removed = []
-    session = object.__new__(PokerTableSession)
+    session = make_holdem_session()
     session.table = SimpleNamespace(
         set_stack=lambda selected, amount: (
             restored.update(client=selected, amount=amount) or True
@@ -217,13 +229,10 @@ def test_reconnected_player_gets_live_hand_state_snapshot():
         connected=True,
         send=sent.append,
     )
-    table = Table(max_seats=2)
+    session = make_holdem_session()
+    table = session.table
     table.seats[0] = Seat(client=client, stack=Decimal("100"))
     table.hand_in_progress = True
-    session = object.__new__(PokerTableSession)
-    session.table = table
-    session.table_id = "ABCD"
-    session.game_name = "No-Limit Texas Hold'em"
     session.current_hand_history = ["New hand started.", "Alice bets 5."]
     session.game = SimpleNamespace(
         players=[SimpleNamespace(name="Bob")]

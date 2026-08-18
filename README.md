@@ -21,27 +21,43 @@ PokerMeow is a multiplayer poker server/client app. The server is authoritative:
 all game state, betting, table seating, reconnects, and showdown results live on
 the server.
 
+## Requirements
+
+- Python 3.13
+- Windows for the packaged executable build; development and tests use standard
+  Python commands
+
+## Development Setup
+
+From a fresh clone in PowerShell:
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pytest -q
+```
+
+`requirements.txt` contains the pinned GUI and test dependencies. Building the
+Windows executables additionally uses `requirements-build.txt`; the build script
+installs both files automatically unless `-SkipInstall` is supplied.
+
 ## Desktop GUI
 
 The PySide6 desktop client is an additional presentation layer. The original
 CLI client remains available for development and debugging.
 
-Install the GUI dependency:
-
-```powershell
-py -m pip install -r requirements-gui.txt
-```
-
 Start the existing server:
 
 ```powershell
-py server.py
+python server.py
 ```
 
 Then start one GUI client per player:
 
 ```powershell
-py gui.py
+python gui.py
 ```
 
 Choose **Host Game** to create a table on the connected server, or enter an
@@ -170,6 +186,14 @@ python client.py HOST_PUBLIC_IP --port 8765
 
 ## Testing
 
+Run the automated test suite:
+
+```powershell
+python -m pytest -q
+```
+
+Manual multiplayer smoke test:
+
 Two clients on one computer:
 
 1. Terminal 1: `python server.py`
@@ -212,3 +236,10 @@ If Internet testing fails, check:
 - Windows Firewall allows inbound TCP on the server port.
 - Your friend is using your public IP, not your local `192.168.x.x` IP.
 - Your ISP may use CGNAT, which can prevent normal port forwarding.
+
+## License
+
+Copyright is retained by the author. This source is publicly visible solely for
+portfolio and evaluation purposes. No permission is granted to copy, modify,
+distribute, sublicense, or use the source code or software without the author's
+explicit permission. All rights reserved.

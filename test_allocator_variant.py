@@ -215,7 +215,12 @@ def test_allocator_score_details_are_engine_authoritative():
 
 def test_pot_limit_variants_share_limit_behaviour():
     for game_class in (PotLimitOmahaGame, AllocatorGame):
-        game = game_class({"Alice": 1000, "Bob": 1000}, shuffle=False)
+        game = game_class(
+            {"Alice": 1000, "Bob": 1000},
+            small_blind=5,
+            big_blind=10,
+            shuffle=False,
+        )
         assert game.max_bet("Alice") == Decimal("10")
         assert "all_in" not in game.legal_actions("Alice")
 

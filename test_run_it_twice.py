@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from card import Card
+from game_categories import BoardCategory
 from nlh import NoLimitHoldemGame
 from server import PokerTableSession, run_count_for_votes
 
@@ -84,6 +85,8 @@ def test_run_it_twice_requires_every_active_player_to_choose_twice():
 
 
 class FakeRunoutGame:
+    board_category = BoardCategory.SINGLE_BOARD
+
     def __init__(self, board=None):
         self.board = list(board or [])
         self.next_card = 0

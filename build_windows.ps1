@@ -32,7 +32,7 @@ function Invoke-Python {
 Set-Location $projectRoot
 
 if (-not $SkipInstall) {
-    Invoke-Python -m pip install -r requirements-gui.txt -r requirements-build.txt
+    Invoke-Python -m pip install -r requirements.txt -r requirements-build.txt
 }
 
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
