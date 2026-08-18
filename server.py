@@ -16,27 +16,14 @@ from helicopter import HelicopterGame
 from esg import ESGGame
 from config import HOST, MAX_CONNECTIONS, PORT, TIMEOUTS
 from game_categories import BoardCategory
-from network_protocol import ProtocolError, recv_json, send_json, visible_state_for
+from network_protocol import visible_state_for
 from nlh import HandEvaluator, NoLimitHoldemGame, RANK_VALUES, money
 from plo import PotLimitOmahaGame
 from pof import PotOrFoldGame
 from pineapple import PineappleGame
 from terminator import TerminatorGame
 from ultra_pineapple import UltraPineappleGame
-
-
-def local_ipv4_addresses():
-    addresses = []
-    try:
-        hostname = socket.gethostname()
-        for result in socket.getaddrinfo(hostname, None, socket.AF_INET):
-            address = result[4][0]
-            if address not in addresses and not address.startswith("127."):
-                addresses.append(address)
-    except OSError:
-        pass
-
-    return addresses
+from server_networking import ClientConnection, local_ipv4_addresses
 
 
 def parse_money(value, field_name, allow_zero=False):
@@ -70,99 +57,6 @@ class Seat:
     client: object
     stack: int
     reserved: bool = False
-
-
-class Client:
-    def __init__(self, socket_obj, address, shutdown_event=None):
-        self.socket = socket_obj
-        self.address = address
-        self.file = socket_obj.makefile("rw", encoding="utf-8", newline="\n")
-        self.name = None
-        self.buy_in = None
-        self.connected = True
-        self.leave_after_hand = False
-        self.shutdown_event = shutdown_event or threading.Event()
-        self.send_lock = threading.Lock()
-
-    def send(self, message):
-        if not self.connected:
-            raise ConnectionError("Client is disconnected")
-
-        try:
-            with self.send_lock:
-                send_json(self.file, message)
-        except OSError as error:
-            self.connected = False
-            raise ConnectionError("Client is disconnected") from error
-
-    def recv(self, stop_event=None):
-        if not self.connected:
-            return None
-
-        while not self.shutdown_event.is_set():
-            if stop_event is not None and stop_event.is_set():
-                return None
-            try:
-                readable, _, _ = select.select(
-                    [self.socket],
-                    [],
-                    [],
-                    TIMEOUTS["socket_select"],
-                )
-            except (OSError, ValueError):
-                self.connected = False
-                return None
-
-            if not readable:
-                continue
-
-            try:
-                message = recv_json(self.file)
-            except socket.timeout:
-                continue
-            except ProtocolError:
-                self.connected = False
-                return None
-            except (ConnectionResetError, OSError):
-                self.connected = False
-                return None
-
-            if message is None:
-                self.connected = False
-
-            return message
-
-        self.connected = False
-        return None
-
-    def force_close(self):
-        self.connected = False
-        try:
-            self.socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        try:
-            self.file.close()
-        except OSError:
-            pass
-        try:
-            self.socket.close()
-        except OSError:
-            pass
-
-    def set_timeout(self, timeout):
-        self.socket.settimeout(timeout)
-
-    def close(self):
-        self.connected = False
-        try:
-            self.file.close()
-        except OSError:
-            pass
-        try:
-            self.socket.close()
-        except OSError:
-            pass
 
 
 class Table:
@@ -2974,7 +2868,7 @@ class NetworkPokerServer:
                     except socket.timeout:
                         continue
 
-                    client = Client(socket_obj, address, self.shutdown_event)
+                    client = ClientConnection(socket_obj, address, self.shutdown_event)
                     self._register_client(client)
                     thread = threading.Thread(
                         target=self._handle_client,

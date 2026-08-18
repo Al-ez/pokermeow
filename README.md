@@ -83,6 +83,10 @@ To use another port:
 python server.py --port 9000
 ```
 
+Deployment defaults can also be supplied through `POKERMEOW_HOST`,
+`POKERMEOW_PORT`, and `POKERMEOW_MAX_CONNECTIONS`. Command-line host and port
+options take precedence over those environment-backed defaults.
+
 ## Find The Host's Local IP
 
 On the host computer:
