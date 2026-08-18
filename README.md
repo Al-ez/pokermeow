@@ -1,37 +1,245 @@
 # PokerMeow
 
-## Downloadable Windows Release
+**Online private poker with the special games mainstream platforms leave out.**
 
-Build a shareable Windows bundle from PowerShell:
+![PokerMeow ESG gameplay](docs/images/pokermeow-esg.png)
 
-```powershell
-.\build_windows.ps1
+PokerMeow is a functioning multiplayer desktop poker application built for
+private games with unusual variants, large hands, multiple boards, and custom
+showdown rules. Its Orbital Special system lets a table temporarily switch to a
+different game for selected participants, then return to its normal rotation.
+
+## Why PokerMeow?
+
+Online poker removes much of the manual work of running a game: dealing is
+faster, players do not need to gather around one physical table, and software
+can track bets and pots. Yet the private games that inspired PokerMeow had one
+important reason to keep playing together in person: special games that common
+online platforms did not offer.
+
+Those games can involve many private cards, two boards, mandatory discards,
+unusual scoring, and side pots across players with different stack sizes. They
+are enjoyable to play but cumbersome to operate by hand. PokerMeow grew from a
+personal project for recreating that style of session with friends and letting
+the software handle its bookkeeping.
+
+The application has since been used for a five-player Internet playtest lasting
+hundreds of hands. It remains a personal and portfolio project rather than a
+public poker service.
+
+## What Makes It Different?
+
+Most online tables are tied to one game type. PokerMeow can keep an ordinary
+Hold'em or Omaha table running while inserting a different variant through
+**Orbital Special**:
+
+```text
+Normal table rotation
+        ↓
+Special-game button reaches the dealer
+        ↓
+Dealer selects a game, configuration, and player quota
+        ↓
+Other seated players choose Play or Sit Out
+        ↓        ↓        ↓
+Selected players play one special hand
+        ↓
+The table restores its normal game and rotation
 ```
 
-The finished archive is written to `dist\PokerMeow-Windows.zip`. It contains
-`PokerMeow.exe` for every player, `PokerMeowServer.exe` for the host, and a
-friend-facing `HOW_TO_PLAY.txt`. Python is not required on computers that run
-the finished executables.
+The special hand uses a temporarily selected game engine and configuration
+while the surrounding table session, seats, and player stacks persist.
 
-The host starts `PokerMeowServer.exe` before opening `PokerMeow.exe`. Friends
-open only `PokerMeow.exe` and enter the host's IP address. See the included
-guide for LAN, Internet, firewall, and port-forwarding details.
+### Selecting a special game
 
-PokerMeow is a multiplayer poker server/client app. The server is authoritative:
-all game state, betting, table seating, reconnects, and showdown results live on
-the server.
+The dealer chooses from the supported variants and configures the fields that
+apply to that game.
 
-## Requirements
+![Orbital Special selection](docs/images/orbital-selection.png)
+
+### Opting in
+
+Other players see the chosen configuration and can play or sit out. If the
+quota fills, responses are admitted in receive order.
+
+![Orbital Special opt-in](docs/images/orbital-opt-in.png)
+
+### Playing the special hand
+
+Only the selected participants enter the special hand. After its showdown, the
+session returns to the original table game.
+
+![Orbital Special gameplay](docs/images/orbital-gameplay.png)
+
+## Features
+
+- Multiplayer play over TCP, including LAN and externally reachable servers
+- No-Limit Hold'em, Pot-Limit Omaha, and eight unusual private-game variants
+- Orbital Special hands within a persistent table session
+- Server-authoritative cards, actions, pots, outcomes, and player-specific state
+- Live reconnection snapshots and timed automatic check/fold handling
+- Unanimous run-it-twice voting for eligible single-board all-in situations
+- Main-pot and side-pot settlement across unequal all-in contributions
+- Native single-board, double-board, and alternate-runout presentation
+- Responsive PySide6 rendering and local sorting for unusually large hands
+- Table chat and per-hand action history
+- 157 automated tests run through GitHub Actions
+
+## Special Games
+
+- **No-Limit Texas Hold'em** — standard two-card, single-board Hold'em.
+- **Pot-Limit Omaha** — four, five, or six private cards; one or two boards;
+  preflop and bomb-pot modes.
+- **AOF** — players receive three cards, discard one, then fold or commit a
+  fixed ante multiple.
+- **Pot or Fold** — four-to-six-card Omaha where the opening choice is pot or
+  fold and later players call or fold.
+- **Pineapple** — three private cards, one discard, and two Hold'em boards.
+- **Ultra Pineapple** — five private cards with one discard on each of the flop,
+  turn, and river.
+- **Terminator** — six-card pot-limit play where ranks from a terminated board
+  remove matching cards from hands and the surviving board.
+- **Allocator** — six cards are allocated between two boards and a private-hand
+  strength category, producing a combined score.
+- **Helicopter** — Allocator with equal private-card draws on the turn and river.
+- **ESG (Extremely Stupid Game)** — evolving large private hands, two boards,
+  equal street draws, PLO-style board scoring, and a separate private-hand
+  strength category.
+
+## Engineering Highlights
+
+### Server-authoritative state
+
+The server owns each table, engine instance, deck, cards, betting state, and
+showdown result. Clients submit requested actions; the selected engine validates
+them before mutating the game. State is projected separately for each recipient,
+so a player receives their own cards while opponents normally receive only the
+corresponding hand size and public state.
+
+Relevant code: `server.PokerTableSession`, `network_protocol.visible_state_for`,
+and the engines in `nlh.py` and the variant modules.
+
+### Reconnection during a live hand
+
+A dropped connection does not immediately destroy its seat or engine state. A
+client that rejoins the same table with the same player name can replace the
+disconnected socket and receive the current table, filtered hand state, and
+action history. If an absent player is due to act, a server timer eventually
+checks when legal or folds, preventing the hand from waiting indefinitely.
+
+This is practical session recovery for trusted private games, not
+production-grade identity: reconnects are name-based and the protocol does not
+provide account authentication.
+
+### Temporary game-engine substitution
+
+Orbital Special saves the normal table configuration, validates a selected
+variant, collects opt-ins concurrently, and runs one hand with the chosen
+participants. A `finally` path restores the normal engine configuration and
+rotation even when the special-hand path exits unexpectedly.
+
+### Pot and side-pot settlement
+
+The engine tracks both per-street bets and total hand commitments. At showdown,
+unique contribution levels form separate pots with distinct eligible-player
+pools. Folded players remain contributors but cannot win; tied winners divide
+the applicable pot. Allocator and ESG additionally rescore eligible players for
+each pot.
+
+### Run it twice and multiple boards
+
+Eligible single-board all-in hands offer a timed vote. Two runs occur only when
+every active player agrees. The server preserves the partial board, deals each
+completion sequentially, and divides every main and side pot across the
+runouts. This is distinct from variants whose normal rules always maintain two
+boards.
+
+### Large-hand GUI
+
+Several variants outgrow a conventional two-card layout. `CardFanWidget` wraps
+visible cards into rows of six, collapses large hidden hands into a card-back
+count, and participates in responsive table geometry. Players with six or more
+visible cards can sort their local display by rank strength or suit without
+changing authoritative card order.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    GUI[PySide6 GUI] --> MW[MainWindow and ClientController]
+    MW --> NET[JsonConnection]
+    NET <-->|TCP and newline-delimited JSON| SERVER[NetworkPokerServer]
+    SERVER --> SESSION[Table and PokerTableSession]
+    SESSION --> ENGINE[Authoritative poker engine]
+    ENGINE --> NLH[NLH]
+    ENGINE --> PLO[PLO]
+    ENGINE --> VARIANTS[Special variants]
+```
+
+A player action travels from a Qt control through `MainWindow` and
+`ClientController`, then across the TCP/JSON protocol. `PokerTableSession`
+passes the request to the current game engine for validation. The server then
+sends player-specific updated state, which the controller translates into UI
+events for the table view.
+
+The major layers are:
+
+```text
+pokermeow_gui/views.py        PySide6 widgets and responsive table rendering
+pokermeow_gui/main_window.py  Qt signal binding, dialogs, and UI coordination
+pokermeow_gui/controller.py   Presentation-neutral client protocol workflow
+pokermeow_gui/networking.py   Client TCP transport and reader thread
+network_protocol.py           JSON framing and visible-state projection
+server_networking.py          Server-side connection transport
+server.py                     Lobby, tables, sessions, and hand orchestration
+nlh.py / variant modules      Betting, dealing, evaluation, and game rules
+```
+
+Adding a variant is not currently a plug-in operation: depending on its rules,
+it may require engine, server orchestration, table-creation UI, and rendering
+changes.
+
+## Tech Stack
 
 - Python 3.13
-- Windows for the packaged executable build; development and tests use standard
-  Python commands
+- PySide6 / Qt desktop GUI
+- TCP sockets with a newline-delimited JSON protocol
+- `Decimal` monetary values
+- pytest
+- GitHub Actions on Ubuntu
 
-## Development Setup
+No database, hosted backend, account system, or external poker service is used.
 
-From a fresh clone in PowerShell:
+## Testing
+
+The current suite contains **157 passing tests**. It covers engine and variant
+rules, legal actions, all-ins and side pots, run-it-twice sequencing, Orbital
+Special admission, reconnection snapshots, table/session behavior, controller
+protocol handling, and responsive GUI rendering.
+
+GitHub Actions runs the complete suite with Python 3.13 for pushes to `main` and
+pull requests targeting `main`:
 
 ```powershell
+python -m pytest -q
+```
+
+The suite is primarily deterministic unit and component testing; it does not
+currently include Internet, load, or real-socket end-to-end tests.
+
+## Getting Started
+
+### Requirements
+
+- Python 3.13
+- Windows PowerShell for the commands below
+
+### Install from a fresh clone
+
+```powershell
+git clone <repository-url>
+cd pokermeow
+
 py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -39,203 +247,59 @@ python -m pip install -r requirements.txt
 python -m pytest -q
 ```
 
-`requirements.txt` contains the pinned GUI and test dependencies. Building the
-Windows executables additionally uses `requirements-build.txt`; the build script
-installs both files automatically unless `-SkipInstall` is supplied.
+### Start a local game
 
-## Desktop GUI
-
-The PySide6 desktop client is an additional presentation layer. The original
-CLI client remains available for development and debugging.
-
-Start the existing server:
+Start the authoritative server:
 
 ```powershell
 python server.py
 ```
 
-Then start one GUI client per player:
+In a second activated terminal, start the GUI:
 
 ```powershell
 python gui.py
 ```
 
-Choose **Host Game** to create a table on the connected server, or enter an
-existing table ID and choose **Join Game**. "Host" means the player creating
-the table; the authoritative `server.py` process must already be running.
+Use `127.0.0.1` as the server address when the server and client run on the
+same computer. Start additional GUI clients in separate terminals to add local
+players.
 
-The current server starts hands automatically when at least two players are
-seated, so seated players are shown as ready and the host-only start control is
-informational. The server protocol does not currently define player chat;
-server and game messages are shown in the Chat/Table feed panel, while message
-sending stays disabled.
-
-GUI modules are separated by responsibility:
-
-```text
-pokermeow_gui/views.py        PySide6 widgets
-pokermeow_gui/main_window.py  Qt event binding and dialogs
-pokermeow_gui/controller.py   Client workflow and protocol decisions
-pokermeow_gui/networking.py   Socket JSON transport
-```
-
-## Start The Server
-
-On the host computer:
+The original CLI network client is also available:
 
 ```powershell
-python server.py
+python client.py 127.0.0.1
 ```
 
-By default the server listens on all interfaces:
+### LAN and Internet play
 
-```text
-0.0.0.0:8765
-```
+LAN clients connect to the server machine's private IPv4 address. Internet play
+requires clients to be able to reach the host's configured TCP port; in the
+current self-hosted design that commonly means firewall configuration and
+manual router port forwarding. PokerMeow does not currently provide hosted
+servers, encrypted transport, authentication, or automatic NAT traversal.
 
-To use another port:
+### Windows executable bundle
+
+To build the existing PyInstaller bundle:
 
 ```powershell
-python server.py --port 9000
+.\build_windows.ps1
 ```
 
-Deployment defaults can also be supplied through `POKERMEOW_HOST`,
-`POKERMEOW_PORT`, and `POKERMEOW_MAX_CONNECTIONS`. Command-line host and port
-options take precedence over those environment-backed defaults.
+The output is written under `dist\` and contains `PokerMeow.exe`,
+`PokerMeowServer.exe`, and the Windows quick-start guide.
 
-## Find The Host's Local IP
+## Project Status
 
-On the host computer:
+PokerMeow is a personal project intended for private play with friends and as a
+software engineering portfolio project. It has been exercised in a five-player
+Internet session over hundreds of hands, but it is not positioned as a hosted,
+production-scale, or public poker service.
 
-```powershell
-ipconfig
-```
-
-Look for `IPv4 Address`, usually something like:
-
-```text
-192.168.1.23
-```
-
-Players on the same Wi-Fi/LAN connect with:
-
-```powershell
-python client.py 192.168.1.23 --port 8765
-```
-
-## Router Port Forwarding For Internet Play
-
-For friends outside your house, your router must forward traffic to the host PC.
-
-In your router admin page, add a port-forward rule:
-
-```text
-Protocol: TCP
-External port: 8765
-Internal IP: host computer local IPv4, for example 192.168.1.23
-Internal port: 8765
-```
-
-If you start the server with a different port, use that same port in the router
-rule and client command.
-
-Your friend connects using your public IP:
-
-```powershell
-python client.py YOUR_PUBLIC_IP --port 8765
-```
-
-You can find your public IP by searching "what is my IP" in a browser.
-
-## Windows Firewall
-
-When Windows asks whether to allow Python through the firewall, allow it on
-private networks.
-
-If you need to add the rule manually:
-
-1. Open `Windows Defender Firewall`.
-2. Click `Advanced settings`.
-3. Click `Inbound Rules`.
-4. Click `New Rule`.
-5. Choose `Port`.
-6. Choose `TCP` and enter `8765`.
-7. Choose `Allow the connection`.
-8. Enable at least `Private`.
-9. Name it `PokerMeow Server`.
-
-## Client Usage
-
-Same computer:
-
-```powershell
-python client.py 127.0.0.1 --port 8765
-```
-
-Same LAN:
-
-```powershell
-python client.py HOST_LOCAL_IP --port 8765
-```
-
-Different Internet connections:
-
-```powershell
-python client.py HOST_PUBLIC_IP --port 8765
-```
-
-## Testing
-
-Run the automated test suite:
-
-```powershell
-python -m pytest -q
-```
-
-Manual multiplayer smoke test:
-
-Two clients on one computer:
-
-1. Terminal 1: `python server.py`
-2. Terminal 2: `python client.py 127.0.0.1`
-3. Terminal 3: `python client.py 127.0.0.1`
-
-Two computers on the same LAN:
-
-1. Host runs `python server.py`.
-2. Host finds local IP with `ipconfig`.
-3. Friend runs `python client.py HOST_LOCAL_IP --port 8765`.
-
-Two computers on different Internet connections:
-
-1. Host runs `python server.py --port 8765`.
-2. Host forwards TCP port `8765` to the host computer's local IPv4.
-3. Host allows TCP port `8765` through Windows Firewall.
-4. Friend runs `python client.py HOST_PUBLIC_IP --port 8765`.
-
-Disconnect and reconnect:
-
-1. Join a table and start a hand.
-2. Close one client window.
-3. Reopen the client and connect to the same server.
-4. Join the same table and use the same player name.
-
-## Troubleshooting
-
-If same-computer testing fails, the server is probably not running or the port is
-wrong.
-
-If LAN testing fails, check Windows Firewall and confirm both computers are on
-the same Wi-Fi/LAN.
-
-If Internet testing fails, check:
-
-- Router port forwarding uses TCP.
-- External and internal ports match the server port.
-- Internal IP matches the host computer's current IPv4.
-- Windows Firewall allows inbound TCP on the server port.
-- Your friend is using your public IP, not your local `192.168.x.x` IP.
-- Your ISP may use CGNAT, which can prevent normal port forwarding.
+Possible future directions include hosted server infrastructure, authenticated
+identity, smoother application updates, more variants, ledger/session tools,
+and web or mobile clients.
 
 ## License
 
