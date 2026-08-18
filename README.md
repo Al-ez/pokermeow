@@ -237,7 +237,7 @@ currently include Internet, load, or real-socket end-to-end tests.
 ### Install from a fresh clone
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/Al-ez/pokermeow
 cd pokermeow
 
 py -3.13 -m venv .venv
